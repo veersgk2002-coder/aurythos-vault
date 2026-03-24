@@ -1,284 +1,40 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Aurythos Vault</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<style>
-:root{
-  --bg:#0b1f2a;
-  --card:#163646;
-  --accent:#4facfe;
-  --accent2:#00f2fe;
-  --text:#e9f3f7;
-  --muted:#9fb7c2;
-}
-
-*{box-sizing:border-box}
-
-body{
-  margin:0;
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-  color:var(--text);
-}
-
-.container{
-  max-width:900px;
-  margin:auto;
-  padding:16px;
-}
-
-.header{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  margin-bottom:12px;
-}
-
-h2,h3{margin:0 0 10px 0}
-
-.card{
-  background: rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.08);
-  border-radius:14px;
-  padding:16px;
-  margin-bottom:14px;
-  backdrop-filter: blur(10px);
-}
-
-.row{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  align-items:center;
-}
-
-input[type="file"]{
-  background:#fff;
-  color:#000;
-  border-radius:8px;
-  padding:6px;
-}
-
-input[type="text"]{
-  flex:1;
-  min-width:120px;
-  padding:8px;
-  border-radius:8px;
-  border:none;
-}
-
-button{
-  border:none;
-  padding:8px 12px;
-  border-radius:8px;
-  cursor:pointer;
-  font-size:13px;
-  background: linear-gradient(90deg,var(--accent),var(--accent2));
-  color:#fff;
-}
-
-button.secondary{
-  background:#2c5364;
-}
-
-button.danger{
-  background:#e74c3c;
-}
-
-.file-card{
-  background: rgba(255,255,255,0.05);
-  padding:10px;
-  border-radius:10px;
-  margin-top:10px;
-}
-
-.filename{
-  font-size:13px;
-  color:var(--text);
-  margin-bottom:6px;
-  word-break:break-all;
-}
-
-.actions{
-  display:flex;
-  gap:6px;
-  flex-wrap:wrap;
-  align-items:center;
-}
-
-.small{
-  font-size:11px;
-  color:var(--muted);
-}
-
-.logout{
-  margin-top:10px;
-}
-</style>
+<title>Dashboard</title>
+<link rel="stylesheet" href="style.css">
 </head>
-
 <body>
 
-<div class="container">
+<h2>Dashboard</h2>
 
-  <div class="header">
-    <h2>Your Vault</h2>
-  </div>
+<form action="/upload" method="POST" enctype="multipart/form-data">
+<input type="file" name="files" multiple required>
+<button>Upload</button>
+</form>
 
-  <!-- Upload -->
-  <div class="card">
-    <h3>Upload Files</h3>
-    <div class="row">
-      <input type="file" id="file" multiple>
-      <button onclick="upload()">Upload</button>
-    </div>
-  </div>
+<h3>Your Files</h3>
+<div id="files"></div>
 
-  <!-- Files -->
-  <div class="card">
-    <h3>Your Files</h3>
-    <div id="files"></div>
-  </div>
-
-  <!-- Shared -->
-  <div class="card">
-    <h3>Shared With You</h3>
-    <div id="shared"></div>
-  </div>
-
-  <button class="secondary logout" onclick="logout()">Logout</button>
-
-</div>
+<a href="/logout">Logout</a>
 
 <script>
-
-const token = localStorage.getItem("token");
-if(!token) location.href="/";
-
-// ===== UPLOAD (UNCHANGED LOGIC) =====
-function upload(){
-  const input = document.getElementById("file");
-  if(!input.files.length){
-    alert("Select file");
-    return;
-  }
-
-  const form = new FormData();
-  for(let i=0;i<input.files.length;i++){
-    form.append("file", input.files[i]);
-  }
-
-  fetch("/upload",{
-    method:"POST",
-    headers:{authorization:token},
-    body:form
-  })
-  .then(r=>r.text())
-  .then(msg=>{
-    alert(msg);
-    loadFiles();
-  });
-}
-
-// ===== LOAD FILES =====
-function loadFiles(){
-  fetch("/files",{headers:{authorization:token}})
-  .then(r=>r.json())
-  .then(data=>{
-    let html="";
-
-    data.forEach(f=>{
-      const shortName = f.length>40 ? f.substring(0,40)+"..." : f;
-
-      html+=`
-      <div class="file-card">
-        <div class="filename">${shortName}</div>
-
-        <div class="actions">
-          <input id="share-${f}" placeholder="username">
-          <button onclick="share('${f}')">Share</button>
-          <button class="danger" onclick="del('${f}')">Delete</button>
-          <a href="/download/${f}" target="_blank">
-            <button class="secondary">Download</button>
-          </a>
-        </div>
+fetch("/files")
+.then(res => res.json())
+.then(data => {
+  let html = "";
+  data.forEach(f => {
+    html += `
+      <div>
+        ${f.name} (${(f.size/1024).toFixed(2)} KB)
+        <a href="/download/${f.id}">Download</a>
+        <a href="/delete/${f.id}">Delete</a>
+        <a href="/share/${f.id}">Share</a>
       </div>
-      `;
-    });
-
-    document.getElementById("files").innerHTML = html || "<div class='small'>No files yet</div>";
+    `;
   });
-}
-
-// ===== DELETE =====
-function del(file){
-  fetch("/delete",{
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-      authorization:token
-    },
-    body:JSON.stringify({file})
-  })
-  .then(()=>loadFiles());
-}
-
-// ===== SHARE =====
-function share(file){
-  const toUser = document.getElementById("share-"+file).value;
-
-  if(!toUser){
-    alert("Enter username");
-    return;
-  }
-
-  fetch("/share",{
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-      authorization:token
-    },
-    body:JSON.stringify({filename:file,toUser})
-  })
-  .then(r=>r.text())
-  .then(alert);
-}
-
-// ===== SHARED FILES =====
-function loadShared(){
-  fetch("/shared",{headers:{authorization:token}})
-  .then(r=>r.json())
-  .then(data=>{
-    let html="";
-
-    data.forEach(f=>{
-      html+=`
-      <div class="file-card">
-        <div class="filename">${f.file}</div>
-        <div class="small">from ${f.from}</div>
-        <a href="/download/${f.file}" target="_blank">
-          <button class="secondary">Download</button>
-        </a>
-      </div>
-      `;
-    });
-
-    document.getElementById("shared").innerHTML = html || "<div class='small'>No shared files</div>";
-  });
-}
-
-// ===== LOGOUT =====
-function logout(){
-  localStorage.removeItem("token");
-  location.href="/";
-}
-
-// INIT
-loadFiles();
-loadShared();
-
+  document.getElementById("files").innerHTML = html;
+});
 </script>
 
 </body>
