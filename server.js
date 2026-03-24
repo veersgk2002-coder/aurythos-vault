@@ -4,21 +4,11 @@ const multer = require("multer");
 const fs = require("fs");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
-const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
-
-// ===== CONFIG =====
 const PORT = process.env.PORT || 3000;
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
-
-const BUCKET = "files";
-
-// ===== CREATE TEMP =====
+// ===== TEMP FOLDER =====
 if (!fs.existsSync("./temp")) fs.mkdirSync("./temp");
 
 // ===== ENCRYPTION =====
@@ -56,6 +46,7 @@ const upload = multer({ dest: "temp/" });
 
 // ===== MEMORY DB =====
 let users = {};
+let filesDB = {}; // 🔥 local storage (NO supabase for now)
 
 // ===== AUTH =====
 function auth(req, res, next) {
@@ -68,9 +59,9 @@ app.get("/", (req, res) => {
   res.send(`
   <html>
   <style>
-    body { background:#0f2027; color:white; font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh;}
-    .box { background:#1c3b45; padding:25px; border-radius:10px; width:320px;}
-    input,button { width:100%; padding:10px; margin:6px 0;}
+    body { background:#0f2027;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;}
+    .box { background:#1c3b45;padding:25px;border-radius:10px;width:300px;}
+    input,button { width:100%;padding:10px;margin:5px 0;}
   </style>
   <body>
     <div class="box">
@@ -127,50 +118,31 @@ app.post("/login", async (req, res) => {
 });
 
 // ===== DASHBOARD =====
-app.get("/dashboard", auth, async (req, res) => {
+app.get("/dashboard", auth, (req, res) => {
   const username = req.session.user;
 
-  let filesHTML = "";
+  let files = filesDB[username] || [];
 
-  try {
-    const { data } = await supabase.storage.from(BUCKET).list(username);
-
-    if (data && data.length > 0) {
-      data.forEach((f) => {
-        filesHTML += `
-        <div class="file">
-          ${f.name}
-          <br/>
-          <a href="/download/${f.name}">Download</a> |
-          <a href="/delete/${f.name}">Delete</a>
-        </div>`;
-      });
-    } else {
-      filesHTML = "<p>No files uploaded</p>";
-    }
-  } catch (e) {
-    filesHTML = "<p>Error loading files</p>";
-  }
+  let list = files.length
+    ? files.map(f => `<div>${f} <a href="/download/${f}">Download</a></div>`).join("")
+    : "<p>No files</p>";
 
   res.send(`
   <html>
   <style>
-    body { background:#0f2027; color:white; font-family:sans-serif; padding:20px;}
-    .file { background:#ffffff10; padding:10px; margin:10px; border-radius:8px;}
+    body { background:#0f2027;color:white;padding:20px;font-family:sans-serif;}
   </style>
   <body>
 
     <h2>Welcome ${username}</h2>
 
-    <a href="/upgrade">Upgrade</a>
-
     <form method="POST" action="/upload" enctype="multipart/form-data">
-      <input type="file" name="files" multiple required/>
+      <input type="file" name="files" multiple/>
       <button>Upload</button>
     </form>
 
     <h3>Your Files</h3>
-    ${filesHTML}
+    ${list}
 
     <br/>
     <a href="/logout">Logout</a>
@@ -180,57 +152,32 @@ app.get("/dashboard", auth, async (req, res) => {
   `);
 });
 
-// ===== MULTI UPLOAD (SAFE) =====
-app.post("/upload", auth, upload.array("files", 10), async (req, res) => {
+// ===== UPLOAD =====
+app.post("/upload", auth, upload.array("files"), (req, res) => {
   const username = req.session.user;
 
-  try {
-    for (let file of req.files) {
-      const buffer = fs.readFileSync(file.path);
-      const encrypted = encrypt(buffer, req.session.key);
+  if (!filesDB[username]) filesDB[username] = [];
 
-      await supabase.storage
-        .from(BUCKET)
-        .upload(`${username}/${Date.now()}_${file.originalname}`, encrypted);
+  for (let file of req.files) {
+    const buffer = fs.readFileSync(file.path);
+    const encrypted = encrypt(buffer, req.session.key);
 
-      fs.unlinkSync(file.path);
-    }
-  } catch (e) {
-    return res.send("Upload failed");
+    fs.writeFileSync(`./temp/${file.originalname}`, encrypted);
+
+    filesDB[username].push(file.originalname);
+
+    fs.unlinkSync(file.path);
   }
 
   res.redirect("/dashboard");
 });
 
 // ===== DOWNLOAD =====
-app.get("/download/:file", auth, async (req, res) => {
-  const username = req.session.user;
-
-  const { data } = await supabase.storage
-    .from(BUCKET)
-    .download(`${username}/${req.params.file}`);
-
-  const buffer = Buffer.from(await data.arrayBuffer());
+app.get("/download/:file", auth, (req, res) => {
+  const buffer = fs.readFileSync(`./temp/${req.params.file}`);
   const decrypted = decrypt(buffer, req.session.key);
 
   res.send(decrypted);
-});
-
-// ===== DELETE =====
-app.get("/delete/:file", auth, async (req, res) => {
-  const username = req.session.user;
-
-  await supabase.storage
-    .from(BUCKET)
-    .remove([`${username}/${req.params.file}`]);
-
-  res.redirect("/dashboard");
-});
-
-// ===== UPGRADE =====
-app.get("/upgrade", auth, (req, res) => {
-  users[req.session.user].plan = "premium";
-  res.send("Upgraded ✅");
 });
 
 // ===== LOGOUT =====
@@ -240,5 +187,5 @@ app.get("/logout", (req, res) => {
 
 // ===== SERVER =====
 app.listen(PORT, () => {
-  console.log("Running on port", PORT);
+  console.log("Running...");
 });
