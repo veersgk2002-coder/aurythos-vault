@@ -1,3 +1,4 @@
+alert("NEW JS LOADED");
 async function login() {
   let res = await fetch("/login", {
     method: "POST",
