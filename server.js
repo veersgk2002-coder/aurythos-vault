@@ -16,14 +16,13 @@ app.use(
     secret: "aurythos-secret",
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false }
   })
 );
 
-// ===== FILE UPLOAD (MEMORY SAFE) =====
+// ===== FILE UPLOAD =====
 const upload = multer({ storage: multer.memoryStorage() });
 
-// ===== DATABASE (TEMP MEMORY) =====
+// ===== DATABASE =====
 let users = {};
 let filesDB = {};
 
@@ -47,9 +46,7 @@ function decrypt(buffer, key) {
 
 // ===== AUTH =====
 function auth(req, res, next) {
-  if (!req.session.user || !req.session.key) {
-    return res.redirect("/");
-  }
+  if (!req.session.user) return res.redirect("/");
   next();
 }
 
@@ -58,49 +55,23 @@ app.get("/", (req, res) => {
   res.send(`
   <html>
   <style>
-    body {
-      background:#0f2027;
-      display:flex;
-      justify-content:center;
-      align-items:center;
-      height:100vh;
-      font-family:sans-serif;
-      color:white;
-    }
-    .box {
-      background:#1c3b45;
-      padding:25px;
-      border-radius:12px;
-      width:320px;
-      box-shadow:0 0 20px rgba(0,0,0,0.5);
-    }
-    input,button {
-      width:100%;
-      padding:12px;
-      margin:6px 0;
-      border:none;
-      border-radius:6px;
-    }
-    button {
-      background:#00c6ff;
-      color:black;
-      font-weight:bold;
-      cursor:pointer;
-    }
+    body { background:#0f2027; display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif; color:white;}
+    .box { background:#1c3b45; padding:25px; border-radius:10px; width:300px;}
+    input,button { width:100%; padding:10px; margin:5px 0;}
   </style>
   <body>
     <div class="box">
       <h2>Aurythos Vault</h2>
 
       <form method="POST" action="/login">
-        <input name="username" placeholder="Username" required />
-        <input type="password" name="password" placeholder="Password" required />
+        <input name="username" placeholder="Username" required/>
+        <input type="password" name="password" placeholder="Password" required/>
         <button>Login</button>
       </form>
 
       <form method="POST" action="/register">
-        <input name="username" placeholder="Username" required />
-        <input type="password" name="password" placeholder="Password" required />
+        <input name="username" placeholder="Username" required/>
+        <input type="password" name="password" placeholder="Password" required/>
         <button>Register</button>
       </form>
     </div>
@@ -113,14 +84,14 @@ app.get("/", (req, res) => {
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
 
-  if (users[username]) return res.send("User already exists");
+  if (users[username]) return res.send("User exists");
 
   users[username] = {
-    password: await bcrypt.hash(password, 10),
+    hash: await bcrypt.hash(password, 10),
+    raw: password // 🔥 IMPORTANT
   };
 
   req.session.user = username;
-  req.session.key = getKey(password);
 
   res.redirect("/dashboard");
 });
@@ -132,12 +103,10 @@ app.post("/login", async (req, res) => {
   const user = users[username];
   if (!user) return res.send("User not found");
 
-  if (!(await bcrypt.compare(password, user.password))) {
+  if (!(await bcrypt.compare(password, user.hash)))
     return res.send("Wrong password");
-  }
 
   req.session.user = username;
-  req.session.key = getKey(password);
 
   res.redirect("/dashboard");
 });
@@ -148,73 +117,49 @@ app.get("/dashboard", auth, (req, res) => {
   const files = filesDB[username] || [];
 
   let list = files.length
-    ? files.map((f, i) => `
-      <div style="margin:10px 0;">
-        📄 ${f.name}
-        <a href="/download/${i}" style="color:#00c6ff;">Download</a>
-      </div>
-    `).join("")
-    : "<p>No files uploaded</p>";
+    ? files.map((f, i) =>
+        `<div>${f.name} <a href="/download/${i}">Download</a></div>`
+      ).join("")
+    : "<p>No files</p>";
 
   res.send(`
   <html>
   <style>
-    body {
-      background:#0f2027;
-      color:white;
-      font-family:sans-serif;
-      padding:20px;
-    }
-    .card {
-      background:#1c3b45;
-      padding:20px;
-      border-radius:10px;
-      max-width:400px;
-      margin:auto;
-    }
-    input,button {
-      width:100%;
-      padding:10px;
-      margin:5px 0;
-    }
-    button {
-      background:#00c6ff;
-      border:none;
-      font-weight:bold;
-    }
+    body { background:#0f2027;color:white;padding:20px;font-family:sans-serif;}
+    input,button { margin:5px 0;}
   </style>
   <body>
 
-    <div class="card">
-      <h2>Welcome ${username}</h2>
+    <h2>Welcome ${username}</h2>
 
-      <form method="POST" action="/upload" enctype="multipart/form-data">
-        <input type="file" name="files" multiple required />
-        <button>Upload Files</button>
-      </form>
+    <form method="POST" action="/upload" enctype="multipart/form-data">
+      <input type="file" name="files" multiple required />
+      <button>Upload</button>
+    </form>
 
-      <h3>Your Files</h3>
-      ${list}
+    <h3>Your Files</h3>
+    ${list}
 
-      <br/>
-      <a href="/logout" style="color:red;">Logout</a>
-    </div>
+    <br/>
+    <a href="/logout">Logout</a>
 
   </body>
   </html>
   `);
 });
 
-// ===== UPLOAD =====
+// ===== UPLOAD (FIXED) =====
 app.post("/upload", auth, upload.array("files"), (req, res) => {
   try {
     const username = req.session.user;
-    const key = req.session.key;
+    const user = users[username];
 
-    if (!key) return res.send("Session expired. Login again.");
+    if (!user) return res.send("User missing");
+
+    const key = getKey(user.raw); // 🔥 ALWAYS AVAILABLE
 
     if (!req.files || req.files.length === 0) {
-      return res.send("No files selected");
+      return res.send("No files uploaded");
     }
 
     if (!filesDB[username]) filesDB[username] = [];
@@ -231,7 +176,7 @@ app.post("/upload", auth, upload.array("files"), (req, res) => {
     res.redirect("/dashboard");
 
   } catch (err) {
-    console.error(err);
+    console.error("UPLOAD ERROR:", err);
     res.send("Upload failed");
   }
 });
@@ -239,11 +184,11 @@ app.post("/upload", auth, upload.array("files"), (req, res) => {
 // ===== DOWNLOAD =====
 app.get("/download/:id", auth, (req, res) => {
   const username = req.session.user;
-  const key = req.session.key;
+  const user = users[username];
+
+  const key = getKey(user.raw);
 
   const file = filesDB[username][req.params.id];
-
-  if (!file) return res.send("File not found");
 
   const decrypted = decrypt(file.data, key);
 
@@ -253,12 +198,10 @@ app.get("/download/:id", auth, (req, res) => {
 
 // ===== LOGOUT =====
 app.get("/logout", (req, res) => {
-  req.session.destroy(() => {
-    res.redirect("/");
-  });
+  req.session.destroy(() => res.redirect("/"));
 });
 
 // ===== START =====
 app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+  console.log("Server running...");
 });
