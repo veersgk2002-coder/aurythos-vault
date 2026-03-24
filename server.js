@@ -43,15 +43,31 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// ===== TEMP DATABASE =====
+// ===== TEMP DB =====
 let users = {};
-let plans = {};
-let fileCount = {}; // 🔥 NEW
+let plans = {}; // free / premium
 
 // ===== AUTH =====
 function auth(req, res, next) {
   if (!req.session.user) return res.redirect("/");
   next();
+}
+
+// ===== UTILS =====
+function getFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir);
+}
+
+function getTotalSizeMB(dir) {
+  if (!fs.existsSync(dir)) return 0;
+  const files = fs.readdirSync(dir);
+  let total = 0;
+  files.forEach(f => {
+    const stats = fs.statSync(path.join(dir, f));
+    total += stats.size;
+  });
+  return (total / (1024 * 1024)).toFixed(2); // MB
 }
 
 // ===== ROUTES =====
@@ -69,7 +85,6 @@ app.post("/register", async (req, res) => {
 
   users[username] = await bcrypt.hash(password, 10);
   plans[username] = "free";
-  fileCount[username] = 0; // 🔥 INIT
 
   req.session.user = username;
   res.redirect("/dashboard");
@@ -93,8 +108,14 @@ app.get("/dashboard", auth, (req, res) => {
   const user = req.session.user;
   const dir = `uploads/${user}`;
 
-  let files = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
-  fileCount[user] = files.length;
+  const files = getFiles(dir);
+  const count = files.length;
+  const sizeMB = getTotalSizeMB(dir);
+
+  const maxFiles = plans[user] === "premium" ? "∞" : 5;
+  const maxMB = plans[user] === "premium" ? 1000 : 10; // 10MB free
+
+  const percent = Math.min((sizeMB / maxMB) * 100, 100);
 
   res.send(`
 <!DOCTYPE html>
@@ -130,15 +151,10 @@ body {
 }
 
 .plan {
-  background:#00c6ff;
+  background:${plans[user] === "premium" ? "gold" : "#00c6ff"};
   color:black;
   padding:5px 10px;
   border-radius:8px;
-}
-
-.storage {
-  margin-top:10px;
-  font-size:14px;
 }
 
 .bar {
@@ -151,17 +167,8 @@ body {
 .fill {
   height:8px;
   background:#00c6ff;
-  width:${(fileCount[user]/5)*100}%;
+  width:${percent}%;
   border-radius:5px;
-}
-
-button {
-  width:100%;
-  padding:12px;
-  border:none;
-  border-radius:8px;
-  background:#00c6ff;
-  margin-top:10px;
 }
 
 .file {
@@ -171,12 +178,27 @@ button {
   margin-top:10px;
   display:flex;
   justify-content:space-between;
+  align-items:center;
+}
+
+.file img {
+  max-width:40px;
+  border-radius:5px;
 }
 
 .file a {
   color:#00c6ff;
   font-size:12px;
   margin-left:8px;
+}
+
+button {
+  width:100%;
+  padding:12px;
+  border:none;
+  border-radius:8px;
+  background:#00c6ff;
+  margin-top:10px;
 }
 
 .upgrade {
@@ -202,29 +224,34 @@ button {
   <div class="plan">${plans[user]}</div>
 </div>
 
-<div class="storage">
-  Storage: ${fileCount[user]}/5
-  <div class="bar"><div class="fill"></div></div>
-</div>
+<p>Files: ${count}/${maxFiles}</p>
+<p>Storage: ${sizeMB}MB / ${maxMB}MB</p>
+
+<div class="bar"><div class="fill"></div></div>
 
 <form action="/upload" method="post" enctype="multipart/form-data">
   <input type="file" name="files" multiple required>
   <button>Upload Files</button>
 </form>
 
-<a href="/pay" class="upgrade">Upgrade ₹99</a>
+${plans[user] === "free" ? `<a href="/pay" class="upgrade">Upgrade ₹99</a>` : ""}
 
 <h3>Your Files</h3>
 
-${files.length === 0 ? "No files" : files.map(f => `
+${files.length === 0 ? "No files" : files.map(f => {
+  const ext = f.split(".").pop().toLowerCase();
+  const isImage = ["jpg","jpeg","png","gif","webp"].includes(ext);
+
+  return `
 <div class="file">
-  <span>${f}</span>
+  ${isImage ? `<img src="/file/${f}">` : `<span>${f}</span>`}
   <div>
+    ${isImage ? `<a href="/file/${f}" target="_blank">Preview</a>` : ""}
     <a href="/download/${f}">Download</a>
     <a href="/delete/${f}">Delete</a>
   </div>
-</div>
-`).join("")}
+</div>`;
+}).join("")}
 
 <br>
 <a href="/logout">Logout</a>
@@ -237,20 +264,22 @@ ${files.length === 0 ? "No files" : files.map(f => `
 `);
 });
 
-// UPLOAD (LIMIT FIXED)
+// UPLOAD (LIMIT + SIZE CONTROL)
 app.post("/upload", auth, upload.array("files"), (req, res) => {
   const user = req.session.user;
   const dir = `uploads/${user}`;
-  const files = fs.readdirSync(dir);
+  const files = getFiles(dir);
 
-  if (files.length >= 5) {
-    return res.send(`
-      <h2 style="color:red;text-align:center;">Limit reached (5 max)</h2>
-      <div style="text-align:center;"><a href="/dashboard">Go Back</a></div>
-    `);
+  if (plans[user] === "free" && files.length >= 5) {
+    return res.send("Limit reached (5 files)");
   }
 
   res.redirect("/dashboard");
+});
+
+// FILE PREVIEW
+app.get("/file/:name", auth, (req, res) => {
+  res.sendFile(path.join(__dirname, "uploads", req.session.user, req.params.name));
 });
 
 // DOWNLOAD

@@ -2,7 +2,6 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <style>
 body {
   margin:0;
@@ -13,66 +12,44 @@ body {
   background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
   font-family: Arial;
 }
-
 .card {
   background: rgba(255,255,255,0.05);
   padding:25px;
   border-radius:15px;
   width:300px;
 }
-
-input {
+input, button {
   width:100%;
   padding:10px;
   margin:8px 0;
   border:none;
   border-radius:6px;
 }
-
-button {
-  width:100%;
-  padding:10px;
-  border:none;
-  border-radius:6px;
-  background:#00c6ff;
-}
-
-.toggle {
-  text-align:center;
-  color:#ccc;
-  margin-top:10px;
-  cursor:pointer;
-}
-
-.hidden {
-  display:none;
-}
+button { background:#00c6ff; }
+.toggle { text-align:center; color:#ccc; cursor:pointer; }
+.hidden { display:none; }
 </style>
 </head>
 
 <body>
-
 <div class="card">
-
 <h2 style="color:white;text-align:center;">Aurythos Vault</h2>
 
 <div id="loginBox">
 <form action="/login" method="post">
-  <input name="username" placeholder="Username" required>
-  <input name="password" type="password" placeholder="Password" required>
-  <button>Login</button>
+<input name="username" placeholder="Username" required>
+<input name="password" type="password" placeholder="Password" required>
+<button>Login</button>
 </form>
-
 <div class="toggle" onclick="showRegister()">New user? Register</div>
 </div>
 
 <div id="registerBox" class="hidden">
 <form action="/register" method="post">
-  <input name="username" placeholder="Username" required>
-  <input name="password" type="password" placeholder="Password" required>
-  <button>Register</button>
+<input name="username" placeholder="Username" required>
+<input name="password" type="password" required>
+<button>Register</button>
 </form>
-
 <div class="toggle" onclick="showLogin()">Back to Login</div>
 </div>
 
