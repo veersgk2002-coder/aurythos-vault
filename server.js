@@ -1,15 +1,11 @@
 const express = require("express");
 const session = require("express-session");
 const multer = require("multer");
-const fs = require("fs");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// ===== TEMP FOLDER =====
-if (!fs.existsSync("./temp")) fs.mkdirSync("./temp");
 
 // ===== ENCRYPTION =====
 function getKey(password) {
@@ -41,12 +37,12 @@ app.use(
   })
 );
 
-// ===== MULTER =====
-const upload = multer({ dest: "temp/" });
+// ===== MULTER MEMORY STORAGE =====
+const upload = multer({ storage: multer.memoryStorage() });
 
-// ===== MEMORY DB =====
+// ===== DATABASE (IN MEMORY) =====
 let users = {};
-let filesDB = {}; // 🔥 local storage (NO supabase for now)
+let filesDB = {}; // { username: [ {name, data} ] }
 
 // ===== AUTH =====
 function auth(req, res, next) {
@@ -92,7 +88,6 @@ app.post("/register", async (req, res) => {
 
   users[username] = {
     password: await bcrypt.hash(password, 10),
-    plan: "free",
   };
 
   req.session.user = username;
@@ -120,17 +115,19 @@ app.post("/login", async (req, res) => {
 // ===== DASHBOARD =====
 app.get("/dashboard", auth, (req, res) => {
   const username = req.session.user;
-
-  let files = filesDB[username] || [];
+  const files = filesDB[username] || [];
 
   let list = files.length
-    ? files.map(f => `<div>${f} <a href="/download/${f}">Download</a></div>`).join("")
+    ? files.map((f, i) =>
+        `<div>${f.name} <a href="/download/${i}">Download</a></div>`
+      ).join("")
     : "<p>No files</p>";
 
   res.send(`
   <html>
   <style>
     body { background:#0f2027;color:white;padding:20px;font-family:sans-serif;}
+    input,button { margin:5px 0;}
   </style>
   <body>
 
@@ -159,24 +156,25 @@ app.post("/upload", auth, upload.array("files"), (req, res) => {
   if (!filesDB[username]) filesDB[username] = [];
 
   for (let file of req.files) {
-    const buffer = fs.readFileSync(file.path);
-    const encrypted = encrypt(buffer, req.session.key);
+    const encrypted = encrypt(file.buffer, req.session.key);
 
-    fs.writeFileSync(`./temp/${file.originalname}`, encrypted);
-
-    filesDB[username].push(file.originalname);
-
-    fs.unlinkSync(file.path);
+    filesDB[username].push({
+      name: file.originalname,
+      data: encrypted,
+    });
   }
 
   res.redirect("/dashboard");
 });
 
 // ===== DOWNLOAD =====
-app.get("/download/:file", auth, (req, res) => {
-  const buffer = fs.readFileSync(`./temp/${req.params.file}`);
-  const decrypted = decrypt(buffer, req.session.key);
+app.get("/download/:id", auth, (req, res) => {
+  const username = req.session.user;
+  const file = filesDB[username][req.params.id];
 
+  const decrypted = decrypt(file.data, req.session.key);
+
+  res.setHeader("Content-Disposition", `attachment; filename="${file.name}"`);
   res.send(decrypted);
 });
 
@@ -185,7 +183,7 @@ app.get("/logout", (req, res) => {
   req.session.destroy(() => res.redirect("/"));
 });
 
-// ===== SERVER =====
+// ===== START =====
 app.listen(PORT, () => {
-  console.log("Running...");
+  console.log("Server running...");
 });
