@@ -58,38 +58,43 @@ button {
 
 <h2 style="color:white;text-align:center;">Aurythos Vault</h2>
 
-<!-- LOGIN -->
+<!-- LOGIN ONLY VISIBLE -->
 <div id="loginBox">
-<form action="/login" method="post">
-  <input name="username" placeholder="Username" required>
-  <input name="password" type="password" placeholder="Password" required>
-  <button>Login</button>
-</form>
+  <form action="/login" method="post">
+    <input name="username" placeholder="Username" required>
+    <input name="password" type="password" placeholder="Password" required>
+    <button>Login</button>
+  </form>
 
-<div class="toggle" onclick="showRegister()">New user? Register</div>
+  <div class="toggle" onclick="showRegister()">New user? Register</div>
 </div>
 
-<!-- REGISTER -->
+<!-- REGISTER HIDDEN -->
 <div id="registerBox" class="hidden">
-<form action="/register" method="post">
-  <input name="username" placeholder="Username" required>
-  <input name="password" type="password" placeholder="Password" required>
-  <button>Register</button>
-</form>
+  <form action="/register" method="post">
+    <input name="username" placeholder="Username" required>
+    <input name="password" type="password" placeholder="Password" required>
+    <button>Register</button>
+  </form>
 
-<div class="toggle" onclick="showLogin()">Back to Login</div>
+  <div class="toggle" onclick="showLogin()">Back to Login</div>
 </div>
 
 </div>
 
 <script>
+// FORCE correct initial state
+document.getElementById("loginBox").style.display = "block";
+document.getElementById("registerBox").style.display = "none";
+
 function showRegister(){
-  document.getElementById("loginBox").style.display="none";
-  document.getElementById("registerBox").style.display="block";
+  document.getElementById("loginBox").style.display = "none";
+  document.getElementById("registerBox").style.display = "block";
 }
+
 function showLogin(){
-  document.getElementById("registerBox").style.display="none";
-  document.getElementById("loginBox").style.display="block";
+  document.getElementById("registerBox").style.display = "none";
+  document.getElementById("loginBox").style.display = "block";
 }
 </script>
 
