@@ -1,207 +1,231 @@
 const express = require("express");
 const session = require("express-session");
-const multer = require("multer");
-const bcrypt = require("bcryptjs");
+const fileUpload = require("express-fileupload");
+const fs = require("fs");
 const crypto = require("crypto");
 
 const app = express();
-const PORT = process.env.PORT || 10000;
 
-// ===== MIDDLEWARE =====
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use(fileUpload());
 
-app.use(
-  session({
-    secret: "aurythos-secret",
+app.use(session({
+    secret: "vault-secret",
     resave: false,
-    saveUninitialized: false,
-  })
-);
+    saveUninitialized: true
+}));
 
-// ===== FILE UPLOAD =====
-const upload = multer({ storage: multer.memoryStorage() });
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
+if (!fs.existsSync("data")) fs.mkdirSync("data");
 
-// ===== DATABASE =====
-let users = {};
-let filesDB = {};
+const USERS_FILE = "data/users.json";
+if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, "{}");
 
-// ===== ENCRYPTION =====
-function getKey(password) {
-  return crypto.createHash("sha256").update(password).digest();
+// ---------- HELPERS ----------
+
+// password → hash
+function hashPassword(password){
+    return crypto.createHash("sha256").update(password).digest("hex");
 }
 
-function encrypt(buffer, key) {
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-  return Buffer.concat([iv, cipher.update(buffer), cipher.final()]);
+// password → encryption key
+function getKey(password){
+    return crypto.pbkdf2Sync(password, "salt", 100000, 32, "sha256");
 }
 
-function decrypt(buffer, key) {
-  const iv = buffer.slice(0, 16);
-  const data = buffer.slice(16);
-  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-  return Buffer.concat([decipher.update(data), decipher.final()]);
+// encrypt file
+function encrypt(buffer, key){
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+    const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
+    return Buffer.concat([iv, encrypted]);
 }
 
-// ===== AUTH =====
-function auth(req, res, next) {
-  if (!req.session.user) return res.redirect("/");
-  next();
+// decrypt file
+function decrypt(buffer, key){
+    const iv = buffer.slice(0,16);
+    const encrypted = buffer.slice(16);
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]);
 }
 
-// ===== HOME =====
-app.get("/", (req, res) => {
-  res.send(`
-  <html>
-  <style>
-    body { background:#0f2027; display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif; color:white;}
-    .box { background:#1c3b45; padding:25px; border-radius:10px; width:300px;}
-    input,button { width:100%; padding:10px; margin:5px 0;}
-  </style>
-  <body>
-    <div class="box">
-      <h2>Aurythos Vault</h2>
+// ---------- AUTH ----------
 
-      <form method="POST" action="/login">
-        <input name="username" placeholder="Username" required/>
-        <input type="password" name="password" placeholder="Password" required/>
-        <button>Login</button>
-      </form>
+app.post("/register",(req,res)=>{
+    let {username,password} = req.body;
+    let users = JSON.parse(fs.readFileSync(USERS_FILE));
 
-      <form method="POST" action="/register">
-        <input name="username" placeholder="Username" required/>
-        <input type="password" name="password" placeholder="Password" required/>
-        <button>Register</button>
-      </form>
-    </div>
-  </body>
-  </html>
-  `);
+    if(users[username]) return res.send("User exists");
+
+    users[username] = {
+        password: hashPassword(password),
+        files:[],
+        shared:[],
+        plan:"free"
+    };
+
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users,null,2));
+
+    req.session.user = username;
+    req.session.key = getKey(password);
+
+    res.redirect("/dashboard");
 });
 
-// ===== REGISTER =====
-app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
+app.post("/login",(req,res)=>{
+    let {username,password} = req.body;
+    let users = JSON.parse(fs.readFileSync(USERS_FILE));
 
-  if (users[username]) return res.send("User exists");
+    if(!users[username] || users[username].password !== hashPassword(password)){
+        return res.send("Invalid login");
+    }
 
-  users[username] = {
-    hash: await bcrypt.hash(password, 10),
-    raw: password // 🔥 IMPORTANT
-  };
+    req.session.user = username;
+    req.session.key = getKey(password);
 
-  req.session.user = username;
-
-  res.redirect("/dashboard");
+    res.redirect("/dashboard");
 });
 
-// ===== LOGIN =====
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
+// ---------- DASHBOARD ----------
 
-  const user = users[username];
-  if (!user) return res.send("User not found");
+app.get("/dashboard",(req,res)=>{
+    if(!req.session.user) return res.redirect("/");
 
-  if (!(await bcrypt.compare(password, user.hash)))
-    return res.send("Wrong password");
+    let users = JSON.parse(fs.readFileSync(USERS_FILE));
+    let user = users[req.session.user];
 
-  req.session.user = username;
+    let filesHTML = user.files.map(f=>`
+        <div>
+            ${f}
+            <input id="u_${f}" placeholder="share username">
+            <button onclick="share('${f}')">Share</button>
+            <button onclick="del('${f}')">Delete</button>
+            <a href="/download/${f}">
+                <button>Download</button>
+            </a>
+        </div>
+    `).join("");
 
-  res.redirect("/dashboard");
-});
+    res.send(`
+    <h2>Dashboard</h2>
 
-// ===== DASHBOARD =====
-app.get("/dashboard", auth, (req, res) => {
-  const username = req.session.user;
-  const files = filesDB[username] || [];
-
-  let list = files.length
-    ? files.map((f, i) =>
-        `<div>${f.name} <a href="/download/${i}">Download</a></div>`
-      ).join("")
-    : "<p>No files</p>";
-
-  res.send(`
-  <html>
-  <style>
-    body { background:#0f2027;color:white;padding:20px;font-family:sans-serif;}
-    input,button { margin:5px 0;}
-  </style>
-  <body>
-
-    <h2>Welcome ${username}</h2>
-
-    <form method="POST" action="/upload" enctype="multipart/form-data">
-      <input type="file" name="files" multiple required />
-      <button>Upload</button>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" multiple>
+        <button>Upload</button>
     </form>
 
     <h3>Your Files</h3>
-    ${list}
+    ${filesHTML}
 
-    <br/>
     <a href="/logout">Logout</a>
 
-  </body>
-  </html>
-  `);
+    <script>
+    function del(f){
+        fetch('/delete/'+f).then(()=>location.reload())
+    }
+
+    function share(f){
+        let u=document.getElementById('u_'+f).value;
+        fetch('/share',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({file:f,user:u})
+        }).then(()=>location.reload())
+    }
+    </script>
+    `);
 });
 
-// ===== UPLOAD (FIXED) =====
-app.post("/upload", auth, upload.array("files"), (req, res) => {
-  try {
-    const username = req.session.user;
-    const user = users[username];
+// ---------- FILE ----------
 
-    if (!user) return res.send("User missing");
+app.post("/upload",(req,res)=>{
+    if(!req.session.user) return res.redirect("/");
 
-    const key = getKey(user.raw); // 🔥 ALWAYS AVAILABLE
+    let users = JSON.parse(fs.readFileSync(USERS_FILE));
+    let user = users[req.session.user];
 
-    if (!req.files || req.files.length === 0) {
-      return res.send("No files uploaded");
-    }
+    let files = req.files.file;
+    if(!Array.isArray(files)) files=[files];
 
-    if (!filesDB[username]) filesDB[username] = [];
+    files.forEach(f=>{
+        let name = Date.now()+"_"+f.name;
 
-    for (let file of req.files) {
-      const encrypted = encrypt(file.buffer, key);
+        const encrypted = encrypt(f.data, req.session.key);
+        fs.writeFileSync("uploads/"+name, encrypted);
 
-      filesDB[username].push({
-        name: file.originalname,
-        data: encrypted,
-      });
-    }
+        user.files.push(name);
+    });
+
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users,null,2));
 
     res.redirect("/dashboard");
-
-  } catch (err) {
-    console.error("UPLOAD ERROR:", err);
-    res.send("Upload failed");
-  }
 });
 
-// ===== DOWNLOAD =====
-app.get("/download/:id", auth, (req, res) => {
-  const username = req.session.user;
-  const user = users[username];
+// download (decrypt)
+app.get("/download/:f",(req,res)=>{
+    if(!req.session.user) return res.redirect("/");
 
-  const key = getKey(user.raw);
+    const data = fs.readFileSync("uploads/"+req.params.f);
+    const decrypted = decrypt(data, req.session.key);
 
-  const file = filesDB[username][req.params.id];
-
-  const decrypted = decrypt(file.data, key);
-
-  res.setHeader("Content-Disposition", `attachment; filename="${file.name}"`);
-  res.send(decrypted);
+    res.setHeader("Content-Disposition","attachment");
+    res.send(decrypted);
 });
 
-// ===== LOGOUT =====
-app.get("/logout", (req, res) => {
-  req.session.destroy(() => res.redirect("/"));
+// delete
+app.get("/delete/:f",(req,res)=>{
+    let users = JSON.parse(fs.readFileSync(USERS_FILE));
+    let user = users[req.session.user];
+
+    user.files = user.files.filter(x=>x!==req.params.f);
+    fs.unlinkSync("uploads/"+req.params.f);
+
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users,null,2));
+
+    res.redirect("/dashboard");
 });
 
-// ===== START =====
-app.listen(PORT, () => {
-  console.log("Server running...");
+// share
+app.post("/share",(req,res)=>{
+    let {file,user} = req.body;
+    let users = JSON.parse(fs.readFileSync(USERS_FILE));
+
+    if(!users[user]) return res.send("User not found");
+
+    users[user].shared.push(file);
+
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users,null,2));
+
+    res.send("ok");
 });
+
+// logout
+app.get("/logout",(req,res)=>{
+    req.session.destroy(()=>res.redirect("/"));
+});
+
+// ---------- LOGIN PAGE ----------
+
+app.get("/",(req,res)=>{
+    res.send(`
+    <h2>Aurythos Vault</h2>
+
+    <form action="/login" method="post">
+        <input name="username" placeholder="Username">
+        <input name="password" placeholder="Password">
+        <button>Login</button>
+    </form>
+
+    <form action="/register" method="post">
+        <input name="username" placeholder="Username">
+        <input name="password" placeholder="Password">
+        <button>Register</button>
+    </form>
+    `);
+});
+
+// ---------- SERVER ----------
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT,()=>console.log("Running on "+PORT));
