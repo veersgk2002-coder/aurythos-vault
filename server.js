@@ -18,26 +18,24 @@ const supabase = createClient(
 
 const BUCKET = "files";
 
-// ===== TEMP FOLDER =====
+// ===== CREATE TEMP =====
 if (!fs.existsSync("./temp")) fs.mkdirSync("./temp");
 
 // ===== ENCRYPTION =====
-const ALGO = "aes-256-cbc";
-
 function getKey(password) {
   return crypto.createHash("sha256").update(password).digest();
 }
 
 function encrypt(buffer, key) {
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGO, key, iv);
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
   return Buffer.concat([iv, cipher.update(buffer), cipher.final()]);
 }
 
 function decrypt(buffer, key) {
   const iv = buffer.slice(0, 16);
   const data = buffer.slice(16);
-  const decipher = crypto.createDecipheriv(ALGO, key, iv);
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
   return Buffer.concat([decipher.update(data), decipher.final()]);
 }
 
@@ -54,14 +52,7 @@ app.use(
 );
 
 // ===== MULTER =====
-const storage = multer.diskStorage({
-  destination: "./temp",
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "_" + file.originalname.replace(/\s/g, "_"));
-  },
-});
-
-const upload = multer({ storage });
+const upload = multer({ dest: "temp/" });
 
 // ===== MEMORY DB =====
 let users = {};
@@ -76,13 +67,11 @@ function auth(req, res, next) {
 app.get("/", (req, res) => {
   res.send(`
   <html>
-  <head>
   <style>
     body { background:#0f2027; color:white; font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh;}
-    .box { background:#1c3b45; padding:25px; border-radius:10px; width:300px;}
-    input,button { width:100%; padding:8px; margin:5px 0;}
+    .box { background:#1c3b45; padding:25px; border-radius:10px; width:320px;}
+    input,button { width:100%; padding:10px; margin:6px 0;}
   </style>
-  </head>
   <body>
     <div class="box">
       <h2>Aurythos Vault</h2>
@@ -92,8 +81,6 @@ app.get("/", (req, res) => {
         <input type="password" name="password" placeholder="Password" required/>
         <button>Login</button>
       </form>
-
-      <br/>
 
       <form method="POST" action="/register">
         <input name="username" placeholder="Username" required/>
@@ -143,37 +130,39 @@ app.post("/login", async (req, res) => {
 app.get("/dashboard", auth, async (req, res) => {
   const username = req.session.user;
 
-  const { data } = await supabase.storage.from(BUCKET).list(username);
-
   let filesHTML = "";
 
-  if (data && data.length > 0) {
-    data.forEach((f) => {
-      filesHTML += `
-      <div class="file">
-        <b>${f.name}</b><br/>
-        <a href="/download/${f.name}">Download</a> |
-        <a href="/delete/${f.name}">Delete</a>
-      </div>`;
-    });
-  } else {
-    filesHTML = "<p>No files uploaded</p>";
+  try {
+    const { data } = await supabase.storage.from(BUCKET).list(username);
+
+    if (data && data.length > 0) {
+      data.forEach((f) => {
+        filesHTML += `
+        <div class="file">
+          ${f.name}
+          <br/>
+          <a href="/download/${f.name}">Download</a> |
+          <a href="/delete/${f.name}">Delete</a>
+        </div>`;
+      });
+    } else {
+      filesHTML = "<p>No files uploaded</p>";
+    }
+  } catch (e) {
+    filesHTML = "<p>Error loading files</p>";
   }
 
   res.send(`
   <html>
-  <head>
   <style>
     body { background:#0f2027; color:white; font-family:sans-serif; padding:20px;}
     .file { background:#ffffff10; padding:10px; margin:10px; border-radius:8px;}
-    button,input { padding:6px; margin:5px;}
   </style>
-  </head>
   <body>
 
     <h2>Welcome ${username}</h2>
 
-    <a href="/upgrade">Upgrade to Premium</a>
+    <a href="/upgrade">Upgrade</a>
 
     <form method="POST" action="/upload" enctype="multipart/form-data">
       <input type="file" name="files" multiple required/>
@@ -191,25 +180,23 @@ app.get("/dashboard", auth, async (req, res) => {
   `);
 });
 
-// ===== MULTIPLE UPLOAD =====
+// ===== MULTI UPLOAD (SAFE) =====
 app.post("/upload", auth, upload.array("files", 10), async (req, res) => {
   const username = req.session.user;
 
-  const { data } = await supabase.storage.from(BUCKET).list(username);
+  try {
+    for (let file of req.files) {
+      const buffer = fs.readFileSync(file.path);
+      const encrypted = encrypt(buffer, req.session.key);
 
-  if (users[username].plan === "free" && data.length + req.files.length > 3) {
-    return res.send("Free plan limit = 3 files");
-  }
+      await supabase.storage
+        .from(BUCKET)
+        .upload(`${username}/${Date.now()}_${file.originalname}`, encrypted);
 
-  for (let file of req.files) {
-    const buffer = fs.readFileSync(file.path);
-    const encrypted = encrypt(buffer, req.session.key);
-
-    await supabase.storage
-      .from(BUCKET)
-      .upload(`${username}/${file.filename}`, encrypted);
-
-    fs.unlinkSync(file.path);
+      fs.unlinkSync(file.path);
+    }
+  } catch (e) {
+    return res.send("Upload failed");
   }
 
   res.redirect("/dashboard");
@@ -225,11 +212,6 @@ app.get("/download/:file", auth, async (req, res) => {
 
   const buffer = Buffer.from(await data.arrayBuffer());
   const decrypted = decrypt(buffer, req.session.key);
-
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${req.params.file}"`
-  );
 
   res.send(decrypted);
 });
@@ -248,7 +230,7 @@ app.get("/delete/:file", auth, async (req, res) => {
 // ===== UPGRADE =====
 app.get("/upgrade", auth, (req, res) => {
   users[req.session.user].plan = "premium";
-  res.send("Premium Activated ✅");
+  res.send("Upgraded ✅");
 });
 
 // ===== LOGOUT =====
