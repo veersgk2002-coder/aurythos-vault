@@ -22,22 +22,14 @@ const BUCKET = "files";
 const ALGORITHM = "aes-256-cbc";
 
 function getUserKey(password) {
-  return crypto
-    .createHash("sha256")
-    .update(password)
-    .digest()
-    .slice(0, 32);
+  return crypto.createHash("sha256").update(password).digest().slice(0, 32);
 }
 
 function encryptFile(buffer, key) {
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
 
-  const encrypted = Buffer.concat([
-    cipher.update(buffer),
-    cipher.final(),
-  ]);
-
+  const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
   return Buffer.concat([iv, encrypted]);
 }
 
@@ -46,11 +38,7 @@ function decryptFile(buffer, key) {
   const encryptedData = buffer.slice(16);
 
   const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-
-  return Buffer.concat([
-    decipher.update(encryptedData),
-    decipher.final(),
-  ]);
+  return Buffer.concat([decipher.update(encryptedData), decipher.final()]);
 }
 
 // ===== MIDDLEWARE =====
@@ -65,25 +53,25 @@ app.use(
   })
 );
 
-// ===== TEMP STORAGE =====
+// ===== FILE STORAGE =====
 const storage = multer.diskStorage({
   destination: "./temp",
   filename: (req, file, cb) => {
-    const unique =
-      Date.now() + "_" + file.originalname.replace(/\s/g, "_");
+    const unique = Date.now() + "_" + file.originalname.replace(/\s/g, "_");
     cb(null, unique);
   },
 });
-
 const upload = multer({ storage });
 
-// ===== DATABASE (TEMP MEMORY) =====
+// ===== TEMP DATABASE =====
 let users = {};
 let sharedFiles = {};
 
 // ===== AUTH =====
 function auth(req, res, next) {
-  if (!req.session.user) return res.redirect("/");
+  if (!req.session.user || !req.session.key) {
+    return res.redirect("/");
+  }
   next();
 }
 
@@ -114,21 +102,26 @@ app.get("/", (req, res) => {
   `);
 });
 
-// ===== REGISTER =====
+// ===== REGISTER (AUTO LOGIN FIXED) =====
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
 
-  if (users[username]) return res.send("User exists");
+  if (users[username]) return res.send("User already exists");
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
   users[username] = {
     username,
     password: hashedPassword,
-    plan: "free"
+    plan: "free",
   };
 
-  res.redirect("/");
+  // 🔐 AUTO LOGIN
+  const key = getUserKey(password);
+  req.session.user = username;
+  req.session.key = key;
+
+  res.redirect("/dashboard");
 });
 
 // ===== LOGIN =====
@@ -141,11 +134,10 @@ app.post("/login", async (req, res) => {
   const match = await bcrypt.compare(password, user.password);
   if (!match) return res.send("Wrong password");
 
-  // 🔐 ZERO-KNOWLEDGE KEY
   const key = getUserKey(password);
+  req.session.user = username;
   req.session.key = key;
 
-  req.session.user = username;
   res.redirect("/dashboard");
 });
 
@@ -153,12 +145,9 @@ app.post("/login", async (req, res) => {
 app.get("/dashboard", auth, async (req, res) => {
   const username = req.session.user;
 
-  const { data } = await supabase.storage
-    .from(BUCKET)
-    .list(username);
+  const { data } = await supabase.storage.from(BUCKET).list(username);
 
   let filesHTML = "";
-
   if (data) {
     data.forEach((file) => {
       filesHTML += `
@@ -176,13 +165,6 @@ app.get("/dashboard", auth, async (req, res) => {
     });
   }
 
-  let sharedHTML = "";
-  if (sharedFiles[username]) {
-    sharedFiles[username].forEach((f) => {
-      sharedHTML += `<div>${f}</div>`;
-    });
-  }
-
   res.send(`
   <html>
   <body style="background:#0f2027;color:white;padding:20px;">
@@ -196,10 +178,7 @@ app.get("/dashboard", auth, async (req, res) => {
     </form>
 
     <h3>Your Files</h3>
-    ${filesHTML}
-
-    <h3>Shared With You</h3>
-    ${sharedHTML || "No files"}
+    ${filesHTML || "No files"}
 
     <br/><a href="/logout">Logout</a>
   </body>
@@ -210,27 +189,21 @@ app.get("/dashboard", auth, async (req, res) => {
 // ===== UPLOAD =====
 app.post("/upload", auth, upload.single("file"), async (req, res) => {
   const username = req.session.user;
-  const filePath = req.file.path;
 
-  const { data } = await supabase.storage
-    .from(BUCKET)
-    .list(username);
+  const { data } = await supabase.storage.from(BUCKET).list(username);
 
-  // 💰 FREE LIMIT
   if (users[username].plan === "free" && data.length >= 3) {
     return res.send("Upgrade to premium to upload more files");
   }
 
-  const fileBuffer = fs.readFileSync(filePath);
-
-  // 🔐 ENCRYPT WITH USER KEY
+  const fileBuffer = fs.readFileSync(req.file.path);
   const encryptedBuffer = encryptFile(fileBuffer, req.session.key);
 
   await supabase.storage
     .from(BUCKET)
     .upload(`${username}/${req.file.filename}`, encryptedBuffer);
 
-  fs.unlinkSync(filePath);
+  fs.unlinkSync(req.file.path);
 
   res.redirect("/dashboard");
 });
@@ -238,22 +211,17 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
 // ===== DOWNLOAD =====
 app.get("/download/:file", auth, async (req, res) => {
   const username = req.session.user;
-  const fileName = req.params.file;
 
-  const { data, error } = await supabase.storage
+  const { data } = await supabase.storage
     .from(BUCKET)
-    .download(`${username}/${fileName}`);
-
-  if (error) return res.send("Error");
+    .download(`${username}/${req.params.file}`);
 
   const buffer = Buffer.from(await data.arrayBuffer());
-
-  // 🔐 DECRYPT WITH USER KEY
   const decrypted = decryptFile(buffer, req.session.key);
 
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="${fileName}"`
+    `attachment; filename="${req.params.file}"`
   );
 
   res.send(decrypted);
@@ -270,20 +238,9 @@ app.get("/delete/:file", auth, async (req, res) => {
   res.redirect("/dashboard");
 });
 
-// ===== SHARE =====
-app.post("/share", auth, (req, res) => {
-  const { file, to } = req.body;
-
-  if (!sharedFiles[to]) sharedFiles[to] = [];
-  sharedFiles[to].push(file);
-
-  res.redirect("/dashboard");
-});
-
 // ===== UPGRADE =====
 app.get("/upgrade", auth, (req, res) => {
-  const username = req.session.user;
-  users[username].plan = "premium";
+  users[req.session.user].plan = "premium";
   res.send("Upgraded to Premium ✅");
 });
 
