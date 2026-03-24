@@ -1,333 +1,189 @@
 const express = require("express");
-const session = require("express-session");
 const multer = require("multer");
-const fs = require("fs");
+const crypto = require("crypto");
+const axios = require("axios");
 const path = require("path");
-const bcrypt = require("bcrypt");
-const Razorpay = require("razorpay");
+require("dotenv").config();
 
 const app = express();
-const PORT = process.env.PORT || 10000;
-
-// ===== RAZORPAY =====
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || "test_key",
-  key_secret: process.env.RAZORPAY_KEY_SECRET || "test_secret",
-});
-
-// ===== MIDDLEWARE =====
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static("public"));
 
-app.use(session({
-  secret: "vault-secret",
-  resave: false,
-  saveUninitialized: false
-}));
+const upload = multer({ storage: multer.memoryStorage() });
 
-// ===== STORAGE =====
-if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
+// ===== SUPABASE =====
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const user = req.session.user;
-    const dir = `uploads/${user}`;
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
-  }
+// ===== CLOUDINARY =====
+const cloudinary = require("cloudinary").v2;
+cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.API_KEY,
+  api_secret: process.env.API_SECRET,
 });
 
-const upload = multer({ storage });
+// ===== SESSION =====
+let currentUser = null;
 
-// ===== TEMP DB =====
-let users = {};
-let plans = {}; // free / premium
-
-// ===== AUTH =====
-function auth(req, res, next) {
-  if (!req.session.user) return res.redirect("/");
-  next();
-}
-
-// ===== UTILS =====
-function getFiles(dir) {
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir);
-}
-
-function getTotalSizeMB(dir) {
-  if (!fs.existsSync(dir)) return 0;
-  const files = fs.readdirSync(dir);
-  let total = 0;
-  files.forEach(f => {
-    const stats = fs.statSync(path.join(dir, f));
-    total += stats.size;
-  });
-  return (total / (1024 * 1024)).toFixed(2); // MB
+// ===== ENCRYPTION =====
+function hashPassword(password, salt) {
+  return crypto.pbkdf2Sync(password, salt, 1000, 64, "sha512").toString("hex");
 }
 
 // ===== ROUTES =====
 
 // HOME
 app.get("/", (req, res) => {
-  res.sendFile(__dirname + "/public/index.html");
+  res.sendFile(path.join(__dirname, "public/index.html"));
 });
 
 // REGISTER
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
 
-  if (users[username]) return res.send("User exists");
+  const existing = await axios.get(`${SUPABASE_URL}/rest/v1/users?username=eq.${username}`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+  });
 
-  users[username] = await bcrypt.hash(password, 10);
-  plans[username] = "free";
+  if (existing.data.length > 0) {
+    return res.json({ error: "User already exists" });
+  }
 
-  req.session.user = username;
-  res.redirect("/dashboard");
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hashed = hashPassword(password, salt);
+
+  await axios.post(`${SUPABASE_URL}/rest/v1/users`, {
+    username,
+    password: hashed,
+    salt,
+    plan: "free"
+  }, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+  });
+
+  res.json({ success: "Registered successfully" });
 });
 
 // LOGIN
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
-  if (!users[username]) return res.send("User not found");
+  const user = await axios.get(`${SUPABASE_URL}/rest/v1/users?username=eq.${username}`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+  });
 
-  const ok = await bcrypt.compare(password, users[username]);
-  if (!ok) return res.send("Wrong password");
+  if (user.data.length === 0) return res.json({ error: "User not found" });
 
-  req.session.user = username;
-  res.redirect("/dashboard");
-});
+  const dbUser = user.data[0];
+  const hashed = hashPassword(password, dbUser.salt);
 
-// DASHBOARD
-app.get("/dashboard", auth, (req, res) => {
-  const user = req.session.user;
-  const dir = `uploads/${user}`;
-
-  const files = getFiles(dir);
-  const count = files.length;
-  const sizeMB = getTotalSizeMB(dir);
-
-  const maxFiles = plans[user] === "premium" ? "∞" : 5;
-  const maxMB = plans[user] === "premium" ? 1000 : 10; // 10MB free
-
-  const percent = Math.min((sizeMB / maxMB) * 100, 100);
-
-  res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vault</title>
-
-<style>
-body {
-  margin:0;
-  font-family: Arial;
-  background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-  color:white;
-}
-
-.container {
-  padding:20px;
-  max-width:500px;
-  margin:auto;
-}
-
-.card {
-  background: rgba(255,255,255,0.05);
-  padding:20px;
-  border-radius:15px;
-  backdrop-filter: blur(10px);
-}
-
-.top {
-  display:flex;
-  justify-content:space-between;
-}
-
-.plan {
-  background:${plans[user] === "premium" ? "gold" : "#00c6ff"};
-  color:black;
-  padding:5px 10px;
-  border-radius:8px;
-}
-
-.bar {
-  height:8px;
-  background:#333;
-  border-radius:5px;
-  margin-top:5px;
-}
-
-.fill {
-  height:8px;
-  background:#00c6ff;
-  width:${percent}%;
-  border-radius:5px;
-}
-
-.file {
-  background:#ffffff10;
-  padding:10px;
-  border-radius:8px;
-  margin-top:10px;
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-}
-
-.file img {
-  max-width:40px;
-  border-radius:5px;
-}
-
-.file a {
-  color:#00c6ff;
-  font-size:12px;
-  margin-left:8px;
-}
-
-button {
-  width:100%;
-  padding:12px;
-  border:none;
-  border-radius:8px;
-  background:#00c6ff;
-  margin-top:10px;
-}
-
-.upgrade {
-  display:block;
-  text-align:center;
-  background:gold;
-  color:black;
-  padding:10px;
-  border-radius:8px;
-  margin-top:15px;
-  text-decoration:none;
-}
-</style>
-</head>
-
-<body>
-
-<div class="container">
-<div class="card">
-
-<div class="top">
-  <b>${user}</b>
-  <div class="plan">${plans[user]}</div>
-</div>
-
-<p>Files: ${count}/${maxFiles}</p>
-<p>Storage: ${sizeMB}MB / ${maxMB}MB</p>
-
-<div class="bar"><div class="fill"></div></div>
-
-<form action="/upload" method="post" enctype="multipart/form-data">
-  <input type="file" name="files" multiple required>
-  <button>Upload Files</button>
-</form>
-
-${plans[user] === "free" ? `<a href="/pay" class="upgrade">Upgrade ₹99</a>` : ""}
-
-<h3>Your Files</h3>
-
-${files.length === 0 ? "No files" : files.map(f => {
-  const ext = f.split(".").pop().toLowerCase();
-  const isImage = ["jpg","jpeg","png","gif","webp"].includes(ext);
-
-  return `
-<div class="file">
-  ${isImage ? `<img src="/file/${f}">` : `<span>${f}</span>`}
-  <div>
-    ${isImage ? `<a href="/file/${f}" target="_blank">Preview</a>` : ""}
-    <a href="/download/${f}">Download</a>
-    <a href="/delete/${f}">Delete</a>
-  </div>
-</div>`;
-}).join("")}
-
-<br>
-<a href="/logout">Logout</a>
-
-</div>
-</div>
-
-</body>
-</html>
-`);
-});
-
-// UPLOAD (LIMIT + SIZE CONTROL)
-app.post("/upload", auth, upload.array("files"), (req, res) => {
-  const user = req.session.user;
-  const dir = `uploads/${user}`;
-  const files = getFiles(dir);
-
-  if (plans[user] === "free" && files.length >= 5) {
-    return res.send("Limit reached (5 files)");
+  if (hashed !== dbUser.password) {
+    return res.json({ error: "Wrong password" });
   }
 
-  res.redirect("/dashboard");
+  currentUser = username;
+  res.json({ success: "Login success" });
 });
 
-// FILE PREVIEW
-app.get("/file/:name", auth, (req, res) => {
-  res.sendFile(path.join(__dirname, "uploads", req.session.user, req.params.name));
+// GET FILES
+app.get("/files", async (req, res) => {
+  if (!currentUser) return res.json([]);
+
+  const files = await axios.get(`${SUPABASE_URL}/rest/v1/files?username=eq.${currentUser}`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+  });
+
+  res.json(files.data);
 });
 
-// DOWNLOAD
-app.get("/download/:file", auth, (req, res) => {
-  res.download(`uploads/${req.session.user}/${req.params.file}`);
+// UPLOAD
+app.post("/upload", upload.array("files"), async (req, res) => {
+  if (!currentUser) return res.json({ error: "Login first" });
+
+  const user = await axios.get(`${SUPABASE_URL}/rest/v1/users?username=eq.${currentUser}`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+  });
+
+  const plan = user.data[0].plan;
+
+  const existing = await axios.get(`${SUPABASE_URL}/rest/v1/files?username=eq.${currentUser}`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+  });
+
+  if (plan === "free" && existing.data.length + req.files.length > 5) {
+    return res.json({ error: "Limit reached (5 files)" });
+  }
+
+  for (let file of req.files) {
+    const iv = crypto.randomBytes(16).toString("hex");
+
+    const uploadRes = await cloudinary.uploader.upload_stream(
+      { resource_type: "auto" },
+      async (err, result) => {
+        await axios.post(`${SUPABASE_URL}/rest/v1/files`, {
+          username: currentUser,
+          file_name: file.originalname,
+          file_url: result.secure_url,
+          size: file.size,
+          iv
+        }, {
+          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+        });
+      }
+    );
+
+    uploadRes.end(file.buffer);
+  }
+
+  res.json({ success: "Uploaded" });
 });
 
 // DELETE
-app.get("/delete/:file", auth, (req, res) => {
-  const file = `uploads/${req.session.user}/${req.params.file}`;
-  if (fs.existsSync(file)) fs.unlinkSync(file);
-  res.redirect("/dashboard");
-});
+app.post("/delete", async (req, res) => {
+  const { id } = req.body;
 
-// PAYMENT
-app.get("/pay", auth, async (req, res) => {
-  const order = await razorpay.orders.create({
-    amount: 9900,
-    currency: "INR"
+  await axios.delete(`${SUPABASE_URL}/rest/v1/files?id=eq.${id}`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
   });
 
-  res.send(`
-<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-<script>
-var options = {
-  key: "${process.env.RAZORPAY_KEY_ID}",
-  amount: "9900",
-  currency: "INR",
-  order_id: "${order.id}",
-  handler: function () {
-    window.location.href = "/success";
-  }
-};
-var rzp = new Razorpay(options);
-rzp.open();
-</script>
-`);
+  res.json({ success: true });
 });
 
-// SUCCESS
-app.get("/success", auth, (req, res) => {
-  plans[req.session.user] = "premium";
-  res.redirect("/dashboard");
+// SHARE
+app.post("/share", async (req, res) => {
+  const { id, toUser } = req.body;
+
+  const file = await axios.get(`${SUPABASE_URL}/rest/v1/files?id=eq.${id}`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+  });
+
+  if (file.data.length === 0) return res.json({ error: "File not found" });
+
+  await axios.post(`${SUPABASE_URL}/rest/v1/files`, {
+    username: toUser,
+    file_name: file.data[0].file_name,
+    file_url: file.data[0].file_url,
+    size: file.data[0].size,
+    iv: file.data[0].iv
+  }, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+  });
+
+  res.json({ success: "Shared" });
 });
 
-// LOGOUT
-app.get("/logout", (req, res) => {
-  req.session.destroy(() => res.redirect("/"));
+// UPGRADE
+app.post("/upgrade", async (req, res) => {
+  await axios.patch(`${SUPABASE_URL}/rest/v1/users?username=eq.${currentUser}`, {
+    plan: "premium"
+  }, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+  });
+
+  res.json({ success: "Upgraded" });
 });
 
-app.listen(PORT, () => console.log("Server running"));
+// START
+app.listen(10000, () => console.log("Server running"));

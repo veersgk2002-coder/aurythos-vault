@@ -1,42 +1,88 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Dashboard</title>
-<link rel="stylesheet" href="style.css">
+<title>Vault</title>
+<style>
+body { background:#0f2027; color:white; font-family:Arial;}
+.file { background:#1e2a2f; margin:10px; padding:10px; border-radius:10px;}
+button { margin:5px; }
+</style>
 </head>
+
 <body>
 
 <h2>Your Vault</h2>
 
+<p id="plan"></p>
+<p id="count"></p>
+<p id="storage"></p>
+
 <form action="/upload" method="POST" enctype="multipart/form-data">
-<input type="file" name="files" multiple required>
+<input type="file" name="files" multiple>
 <button>Upload</button>
 </form>
+
+<button onclick="pay()">Upgrade ₹99</button>
 
 <h3>Your Files</h3>
 <div id="files"></div>
 
-<a href="/logout">Logout</a>
+<h3>Shared Files</h3>
+<div id="shared"></div>
 
 <script>
-fetch("/files")
-.then(res => res.json())
-.then(data => {
-  let html = "";
 
-  data.forEach(f => {
-    html += `
-      <div>
-        ${f.name} (${(f.size/1024).toFixed(2)} KB)
-        <a href="/download/${f.id}">Download</a>
-        <a href="/delete/${f.id}">Delete</a>
-        <a href="/share/${f.id}">Share</a>
-      </div>
-    `;
+// LOAD FILES
+fetch("/dashboard")
+.then(r=>r.json())
+.then(data=>{
+  plan.innerText="Plan: "+data.plan;
+  count.innerText="Files: "+data.files.length+"/5";
+  storage.innerText="Storage: "+(data.usedStorage/1000000).toFixed(2)+" MB";
+
+  data.files.forEach(f=>{
+    files.innerHTML+=`
+    <div class="file">
+      ${f.file_name}<br>
+
+      <a href="${f.file_url}" target="_blank">Preview</a>
+      <a href="/secure-download/${f.id}">Download</a>
+      <a href="/delete/${f.id}">Delete</a>
+      <button onclick="share('${f.id}')">Share</button>
+    </div>`;
   });
-
-  document.getElementById("files").innerHTML = html;
 });
+
+// SHARE
+function share(id){
+  const user = prompt("Enter username");
+  fetch("/share",{
+    method:"POST",
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({fileId:id,toUser:user})
+  }).then(()=>alert("Shared"));
+}
+
+// SHARED FILES
+fetch("/shared")
+.then(r=>r.json())
+.then(data=>{
+  data.forEach(f=>{
+    shared.innerHTML+=`
+    <div class="file">
+      ${f.file_name} (from ${f.sender})
+      <a href="${f.file_url}" target="_blank">Preview</a>
+    </div>`;
+  });
+});
+
+// PAYMENT
+function pay(){
+  fetch("/create-order")
+  .then(()=>fetch("/verify-payment",{method:"POST"}))
+  .then(()=>location.reload());
+}
+
 </script>
 
 </body>

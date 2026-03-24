@@ -1,70 +1,41 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-body {
-  margin:0;
-  height:100vh;
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-  font-family: Arial;
-}
-.card {
-  background: rgba(255,255,255,0.05);
-  padding:25px;
-  border-radius:15px;
-  width:300px;
-}
-input, button {
-  width:100%;
-  padding:10px;
-  margin:8px 0;
-  border:none;
-  border-radius:6px;
-}
-button { background:#00c6ff; }
-.toggle { text-align:center; color:#ccc; cursor:pointer; }
-.hidden { display:none; }
-</style>
+<title>Aurythos Vault</title>
+<link rel="stylesheet" href="style.css">
 </head>
-
 <body>
-<div class="card">
-<h2 style="color:white;text-align:center;">Aurythos Vault</h2>
 
-<div id="loginBox">
-<form action="/login" method="post">
-<input name="username" placeholder="Username" required>
-<input name="password" type="password" placeholder="Password" required>
-<button>Login</button>
-</form>
-<div class="toggle" onclick="showRegister()">New user? Register</div>
+<div id="authBox">
+<h2>Aurythos Vault</h2>
+
+<input id="username" placeholder="Username">
+<input id="password" placeholder="Password" type="password">
+
+<button onclick="login()">Login</button>
+<p id="msg"></p>
+
+<p onclick="toggleRegister()">New user? Register</p>
+
+<div id="registerBox" style="display:none;">
+<input id="ruser" placeholder="Username">
+<input id="rpass" placeholder="Password">
+<button onclick="register()">Register</button>
+</div>
 </div>
 
-<div id="registerBox" class="hidden">
-<form action="/register" method="post">
-<input name="username" placeholder="Username" required>
-<input name="password" type="password" required>
-<button>Register</button>
-</form>
-<div class="toggle" onclick="showLogin()">Back to Login</div>
+<div id="vault" style="display:none;">
+<h2>Your Vault</h2>
+
+<input type="file" id="files" multiple>
+<button onclick="upload()">Upload</button>
+<button onclick="upgrade()">Upgrade ₹99</button>
+
+<p id="limit"></p>
+
+<div id="fileList"></div>
 </div>
 
-</div>
-
-<script>
-function showRegister(){
-  loginBox.style.display="none";
-  registerBox.style.display="block";
-}
-function showLogin(){
-  registerBox.style.display="none";
-  loginBox.style.display="block";
-}
-</script>
-
+<script src="script.js"></script>
 </body>
 </html>
