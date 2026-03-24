@@ -19,26 +19,24 @@ const supabase = createClient(
 const BUCKET = "files";
 
 // ===== ENCRYPTION =====
-const ALGORITHM = "aes-256-cbc";
+const ALGO = "aes-256-cbc";
 
-function getUserKey(password) {
+function getKey(password) {
   return crypto.createHash("sha256").update(password).digest().slice(0, 32);
 }
 
-function encryptFile(buffer, key) {
+function encrypt(buffer, key) {
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-
+  const cipher = crypto.createCipheriv(ALGO, key, iv);
   const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
   return Buffer.concat([iv, encrypted]);
 }
 
-function decryptFile(buffer, key) {
+function decrypt(buffer, key) {
   const iv = buffer.slice(0, 16);
-  const encryptedData = buffer.slice(16);
-
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-  return Buffer.concat([decipher.update(encryptedData), decipher.final()]);
+  const data = buffer.slice(16);
+  const decipher = crypto.createDecipheriv(ALGO, key, iv);
+  return Buffer.concat([decipher.update(data), decipher.final()]);
 }
 
 // ===== MIDDLEWARE =====
@@ -57,21 +55,18 @@ app.use(
 const storage = multer.diskStorage({
   destination: "./temp",
   filename: (req, file, cb) => {
-    const unique = Date.now() + "_" + file.originalname.replace(/\s/g, "_");
-    cb(null, unique);
+    const name = Date.now() + "_" + file.originalname.replace(/\s/g, "_");
+    cb(null, name);
   },
 });
 const upload = multer({ storage });
 
-// ===== TEMP DATABASE =====
+// ===== MEMORY DB =====
 let users = {};
-let sharedFiles = {};
 
 // ===== AUTH =====
 function auth(req, res, next) {
-  if (!req.session.user || !req.session.key) {
-    return res.redirect("/");
-  }
+  if (!req.session.user || !req.session.key) return res.redirect("/");
   next();
 }
 
@@ -80,20 +75,20 @@ app.get("/", (req, res) => {
   res.send(`
   <html>
   <body style="background:#0f2027;color:white;display:flex;justify-content:center;align-items:center;height:100vh;">
-    <div style="background:#1c3b45;padding:20px;border-radius:10px;width:300px;">
+    <div style="background:#1c3b45;padding:25px;border-radius:12px;width:300px;">
       <h2>Aurythos Vault</h2>
 
       <form method="POST" action="/login">
-        <input name="username" placeholder="Username" required/><br/>
-        <input type="password" name="password" placeholder="Password" required/><br/>
+        <input name="username" placeholder="Username" required/><br/><br/>
+        <input type="password" name="password" placeholder="Password" required/><br/><br/>
         <button>Login</button>
       </form>
 
       <br/>
 
       <form method="POST" action="/register">
-        <input name="username" placeholder="Username" required/><br/>
-        <input type="password" name="password" placeholder="Password" required/><br/>
+        <input name="username" placeholder="Username" required/><br/><br/>
+        <input type="password" name="password" placeholder="Password" required/><br/><br/>
         <button>Register</button>
       </form>
     </div>
@@ -102,24 +97,22 @@ app.get("/", (req, res) => {
   `);
 });
 
-// ===== REGISTER (AUTO LOGIN FIXED) =====
+// ===== REGISTER =====
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
 
-  if (users[username]) return res.send("User already exists");
+  if (users[username]) return res.send("User exists");
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+  const hash = await bcrypt.hash(password, 10);
 
   users[username] = {
-    username,
-    password: hashedPassword,
+    password: hash,
     plan: "free",
   };
 
-  // 🔐 AUTO LOGIN
-  const key = getUserKey(password);
+  // AUTO LOGIN
   req.session.user = username;
-  req.session.key = key;
+  req.session.key = getKey(password);
 
   res.redirect("/dashboard");
 });
@@ -131,12 +124,11 @@ app.post("/login", async (req, res) => {
   const user = users[username];
   if (!user) return res.send("User not found");
 
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.send("Wrong password");
+  const ok = await bcrypt.compare(password, user.password);
+  if (!ok) return res.send("Wrong password");
 
-  const key = getUserKey(password);
   req.session.user = username;
-  req.session.key = key;
+  req.session.key = getKey(password);
 
   res.redirect("/dashboard");
 });
@@ -147,30 +139,30 @@ app.get("/dashboard", auth, async (req, res) => {
 
   const { data } = await supabase.storage.from(BUCKET).list(username);
 
-  let filesHTML = "";
-  if (data) {
-    data.forEach((file) => {
-      filesHTML += `
-      <div style="background:#fff;color:#000;margin:10px;padding:10px;border-radius:5px;">
-        ${file.name}
-        <br/>
-        <form method="POST" action="/share">
-          <input type="hidden" name="file" value="${file.name}" />
-          <input name="to" placeholder="username"/>
-          <button>Share</button>
-        </form>
-        <a href="/download/${file.name}">Download</a>
-        <a href="/delete/${file.name}">Delete</a>
+  let files = "";
+
+  if (data && data.length > 0) {
+    data.forEach((f) => {
+      files += `
+      <div style="background:#ffffff10;padding:10px;margin:10px;border-radius:8px;">
+        <b>${f.name}</b><br/>
+        <a href="/download/${f.name}">Download</a> |
+        <a href="/delete/${f.name}">Delete</a>
       </div>`;
     });
+  } else {
+    files = "<p>No files uploaded</p>";
   }
 
   res.send(`
   <html>
-  <body style="background:#0f2027;color:white;padding:20px;">
+  <body style="background:#0f2027;color:white;font-family:sans-serif;padding:20px;">
+    
     <h2>Welcome ${username}</h2>
 
-    <a href="/upgrade">Upgrade to Premium</a>
+    <a href="/upgrade" style="color:yellow;">Upgrade to Premium</a>
+
+    <br/><br/>
 
     <form method="POST" action="/upload" enctype="multipart/form-data">
       <input type="file" name="file" required/>
@@ -178,9 +170,11 @@ app.get("/dashboard", auth, async (req, res) => {
     </form>
 
     <h3>Your Files</h3>
-    ${filesHTML || "No files"}
+    ${files}
 
-    <br/><a href="/logout">Logout</a>
+    <br/>
+    <a href="/logout">Logout</a>
+
   </body>
   </html>
   `);
@@ -196,12 +190,12 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
     return res.send("Upgrade to premium to upload more files");
   }
 
-  const fileBuffer = fs.readFileSync(req.file.path);
-  const encryptedBuffer = encryptFile(fileBuffer, req.session.key);
+  const buffer = fs.readFileSync(req.file.path);
+  const encrypted = encrypt(buffer, req.session.key);
 
   await supabase.storage
     .from(BUCKET)
-    .upload(`${username}/${req.file.filename}`, encryptedBuffer);
+    .upload(`${username}/${req.file.filename}`, encrypted);
 
   fs.unlinkSync(req.file.path);
 
@@ -217,7 +211,7 @@ app.get("/download/:file", auth, async (req, res) => {
     .download(`${username}/${req.params.file}`);
 
   const buffer = Buffer.from(await data.arrayBuffer());
-  const decrypted = decryptFile(buffer, req.session.key);
+  const decrypted = decrypt(buffer, req.session.key);
 
   res.setHeader(
     "Content-Disposition",
@@ -241,7 +235,7 @@ app.get("/delete/:file", auth, async (req, res) => {
 // ===== UPGRADE =====
 app.get("/upgrade", auth, (req, res) => {
   users[req.session.user].plan = "premium";
-  res.send("Upgraded to Premium ✅");
+  res.send("Premium activated ✅");
 });
 
 // ===== LOGOUT =====
@@ -250,14 +244,6 @@ app.get("/logout", (req, res) => {
 });
 
 // ===== SERVER =====
-const start = (p) => {
-  const s = app.listen(p, () =>
-    console.log("Running on port", p)
-  );
-
-  s.on("error", (e) => {
-    if (e.code === "EADDRINUSE") start(p + 1);
-  });
-};
-
-start(PORT);
+app.listen(PORT, () => {
+  console.log("Running on port", PORT);
+});
