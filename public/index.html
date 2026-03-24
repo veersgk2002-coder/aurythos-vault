@@ -1,29 +1,64 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Aurythos Vault</title>
-  <style>
-    body { background:#0e2a30; display:flex; justify-content:center; align-items:center; height:100vh; }
-    .box { background:#1f3d44; padding:30px; border-radius:10px; width:300px; text-align:center; }
-    input, button { width:90%; margin:10px; padding:10px; }
-  </style>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aurythos Vault</title>
+
+<style>
+body {
+  margin:0;
+  background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+  font-family: Arial;
+}
+
+.card {
+  background: rgba(255,255,255,0.05);
+  padding:25px;
+  border-radius:15px;
+  width:300px;
+  backdrop-filter: blur(10px);
+}
+
+input {
+  width:100%;
+  padding:10px;
+  margin:8px 0;
+  border:none;
+  border-radius:6px;
+}
+
+button {
+  width:100%;
+  padding:10px;
+  border:none;
+  border-radius:6px;
+  background:#00c6ff;
+  margin-top:10px;
+}
+</style>
 </head>
+
 <body>
 
-<div class="box">
-  <h2>Aurythos Vault</h2>
+<div class="card">
+<h2 style="color:white;text-align:center;">Aurythos Vault</h2>
 
-  <form action="/login" method="post">
-    <input name="username" placeholder="Username" required>
-    <input name="password" type="password" placeholder="Password" required>
-    <button>Login</button>
-  </form>
+<form action="/login" method="post">
+  <input name="username" placeholder="Username" required>
+  <input name="password" type="password" placeholder="Password" required>
+  <button>Login</button>
+</form>
 
-  <form action="/register" method="post">
-    <input name="username" placeholder="Username" required>
-    <input name="password" type="password" placeholder="Password" required>
-    <button>Register</button>
-  </form>
+<form action="/register" method="post">
+  <input name="username" placeholder="Username" required>
+  <input name="password" type="password" placeholder="Password" required>
+  <button>Register</button>
+</form>
+
 </div>
 
 </body>

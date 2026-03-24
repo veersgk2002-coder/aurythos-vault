@@ -1,162 +1,278 @@
-require("dotenv").config();
 const express = require("express");
 const session = require("express-session");
 const multer = require("multer");
 const fs = require("fs");
-const path = require("path");
+const bcrypt = require("bcrypt");
+const Razorpay = require("razorpay");
 
 const app = express();
-
-// ===== CONFIG =====
 const PORT = process.env.PORT || 10000;
 
-// SAFE SECRET (NO CRYPTO ERROR)
-const SECRET = process.env.SECRET_KEY || "aurythos_secret_key";
+// ===== RAZORPAY =====
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID || "test_key",
+  key_secret: process.env.RAZORPAY_KEY_SECRET || "test_secret",
+});
 
 // ===== MIDDLEWARE =====
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-
-app.use(session({
-  secret: SECRET,
-  resave: false,
-  saveUninitialized: true
-}));
-
 app.use(express.static("public"));
 
-// ===== STORAGE =====
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const user = req.session.user;
-    if (!user) return cb(new Error("Not logged in"));
+app.use(session({
+  secret: "vault-secret",
+  resave: false,
+  saveUninitialized: false
+}));
 
+// ===== STORAGE =====
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const user = req.session.user;
     const dir = `uploads/${user}`;
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
     cb(null, dir);
   },
-  filename: function (req, file, cb) {
+  filename: (req, file, cb) => {
     cb(null, Date.now() + "-" + file.originalname);
   }
 });
 
 const upload = multer({ storage });
 
-// ===== USERS FILE =====
-const USERS_FILE = "users.json";
-if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, "{}");
+// ===== DATABASE (TEMP MEMORY) =====
+let users = {};
+let plans = {};
+
+// ===== AUTH =====
+function auth(req, res, next) {
+  if (!req.session.user) return res.redirect("/");
+  next();
+}
 
 // ===== ROUTES =====
 
-// Home
+// HOME
 app.get("/", (req, res) => {
-  if (!req.session.user) {
-    return res.sendFile(path.join(__dirname, "public/index.html"));
-  } else {
-    return res.redirect("/dashboard");
-  }
+  res.sendFile(__dirname + "/public/index.html");
 });
 
-// Register
-app.post("/register", (req, res) => {
+// REGISTER
+app.post("/register", async (req, res) => {
   const { username, password } = req.body;
 
-  const users = JSON.parse(fs.readFileSync(USERS_FILE));
   if (users[username]) return res.send("User exists");
 
-  users[username] = password;
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users));
-
-  res.redirect("/");
-});
-
-// Login
-app.post("/login", (req, res) => {
-  const { username, password } = req.body;
-
-  const users = JSON.parse(fs.readFileSync(USERS_FILE));
-  if (users[username] !== password) {
-    return res.send("Invalid login");
-  }
+  users[username] = await bcrypt.hash(password, 10);
+  plans[username] = "free";
 
   req.session.user = username;
   res.redirect("/dashboard");
 });
 
-// Dashboard
-app.get("/dashboard", (req, res) => {
-  if (!req.session.user) return res.redirect("/");
+// LOGIN
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
 
-  const dir = `uploads/${req.session.user}`;
-  let files = [];
+  if (!users[username]) return res.send("User not found");
 
-  if (fs.existsSync(dir)) {
-    files = fs.readdirSync(dir);
-  }
+  const ok = await bcrypt.compare(password, users[username]);
+  if (!ok) return res.send("Wrong password");
 
-  let fileList = files.map(f => `
-    <li>
-      ${f}
-      <a href="/download/${f}">Download</a>
-      <a href="/delete/${f}">Delete</a>
-    </li>
-  `).join("");
-
-  res.send(`
-  <html>
-  <head>
-    <title>Dashboard</title>
-    <style>
-      body { background:#0e2a30; color:white; font-family:sans-serif; text-align:center; }
-      .box { margin:40px auto; padding:20px; background:#1f3d44; width:90%; max-width:400px; border-radius:10px; }
-      input, button { margin:10px; padding:10px; width:90%; }
-    </style>
-  </head>
-  <body>
-    <div class="box">
-      <h2>Welcome ${req.session.user}</h2>
-
-      <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="files" multiple required />
-        <button type="submit">Upload</button>
-      </form>
-
-      <h3>Your Files</h3>
-      <ul>${fileList || "No files"}</ul>
-
-      <a href="/logout">Logout</a>
-    </div>
-  </body>
-  </html>
-  `);
-});
-
-// Upload (MULTIPLE FILES)
-app.post("/upload", upload.array("files"), (req, res) => {
+  req.session.user = username;
   res.redirect("/dashboard");
 });
 
-// Download
-app.get("/download/:file", (req, res) => {
-  const file = path.join(__dirname, "uploads", req.session.user, req.params.file);
-  res.download(file);
+// DASHBOARD
+app.get("/dashboard", auth, (req, res) => {
+  const user = req.session.user;
+  const dir = `uploads/${user}`;
+
+  let files = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vault</title>
+
+<style>
+body {
+  margin:0;
+  font-family: Arial;
+  background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+  color:white;
+}
+
+.container {
+  padding:20px;
+  max-width:500px;
+  margin:auto;
+}
+
+.card {
+  background: rgba(255,255,255,0.05);
+  padding:20px;
+  border-radius:15px;
+  backdrop-filter: blur(10px);
+  box-shadow:0 0 20px rgba(0,0,0,0.3);
+}
+
+.top {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+.plan {
+  background:#00c6ff;
+  color:black;
+  padding:5px 10px;
+  border-radius:8px;
+  font-size:12px;
+}
+
+button {
+  width:100%;
+  padding:12px;
+  border:none;
+  border-radius:8px;
+  background:#00c6ff;
+  color:black;
+  font-weight:bold;
+  margin-top:10px;
+}
+
+.file {
+  background:#ffffff10;
+  padding:10px;
+  border-radius:8px;
+  margin-top:10px;
+  display:flex;
+  justify-content:space-between;
+}
+
+.file a {
+  margin-left:10px;
+  color:#00c6ff;
+  font-size:12px;
+}
+
+.upgrade {
+  display:block;
+  text-align:center;
+  background:gold;
+  color:black;
+  padding:10px;
+  border-radius:8px;
+  margin-top:15px;
+  text-decoration:none;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+<div class="card">
+
+<div class="top">
+  <h3>${user}</h3>
+  <div class="plan">${plans[user]}</div>
+</div>
+
+<form action="/upload" method="post" enctype="multipart/form-data">
+  <input type="file" name="files" multiple required>
+  <button>Upload Files</button>
+</form>
+
+<a href="/pay" class="upgrade">Upgrade ₹99</a>
+
+<h3>Your Files</h3>
+
+${files.length === 0 ? "No files" : files.map(f => `
+<div class="file">
+  <span>${f}</span>
+  <div>
+    <a href="/download/${f}">Download</a>
+    <a href="/delete/${f}">Delete</a>
+  </div>
+</div>
+`).join("")}
+
+<br>
+<a href="/logout">Logout</a>
+
+</div>
+</div>
+
+</body>
+</html>
+`);
 });
 
-// Delete
-app.get("/delete/:file", (req, res) => {
-  const file = path.join(__dirname, "uploads", req.session.user, req.params.file);
+// UPLOAD (LIMIT CONTROL)
+app.post("/upload", auth, upload.array("files"), (req, res) => {
+  const user = req.session.user;
+  const dir = `uploads/${user}`;
+  const files = fs.readdirSync(dir);
+
+  if (plans[user] === "free" && files.length > 3) {
+    return res.send("Limit reached. Upgrade.");
+  }
+
+  res.redirect("/dashboard");
+});
+
+// DOWNLOAD
+app.get("/download/:file", auth, (req, res) => {
+  res.download(`uploads/${req.session.user}/${req.params.file}`);
+});
+
+// DELETE
+app.get("/delete/:file", auth, (req, res) => {
+  const file = `uploads/${req.session.user}/${req.params.file}`;
   if (fs.existsSync(file)) fs.unlinkSync(file);
   res.redirect("/dashboard");
 });
 
-// Logout
-app.get("/logout", (req, res) => {
-  req.session.destroy();
-  res.redirect("/");
+// PAYMENT
+app.get("/pay", auth, async (req, res) => {
+  const order = await razorpay.orders.create({
+    amount: 9900,
+    currency: "INR"
+  });
+
+  res.send(`
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script>
+var options = {
+  key: "${process.env.RAZORPAY_KEY_ID}",
+  amount: "9900",
+  currency: "INR",
+  order_id: "${order.id}",
+  handler: function () {
+    window.location.href = "/success";
+  }
+};
+var rzp = new Razorpay(options);
+rzp.open();
+</script>
+`);
 });
 
-// START
-app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+// SUCCESS
+app.get("/success", auth, (req, res) => {
+  plans[req.session.user] = "premium";
+  res.redirect("/dashboard");
 });
+
+// LOGOUT
+app.get("/logout", (req, res) => {
+  req.session.destroy(() => res.redirect("/"));
+});
+
+app.listen(PORT, () => console.log("Server running"));
