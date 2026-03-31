@@ -1,5 +1,8 @@
 node_modules
+.env
 uploads
-data
 temp
-ngrok
+data
+*.zip
+*.txt
+*.save

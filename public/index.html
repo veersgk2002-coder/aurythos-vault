@@ -1,44 +1,146 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Aurythos Vault</title>
-<link rel="stylesheet" href="style.css">
+  <title>Aurythos Vault</title>
 </head>
-
 <body>
 
-<div id="authBox">
-  <h2>Aurythos Vault</h2>
+<h1>Aurythos Vault 🔐</h1>
 
-  <input id="username" placeholder="Username">
-  <input id="password" type="password" placeholder="Password">
+<!-- REGISTER -->
+<h3>Register</h3>
+<input id="regUser" placeholder="username">
+<input id="regPass" placeholder="password" type="password">
+<button onclick="register()">Register</button>
 
-  <button onclick="login()">Login</button>
-  <p id="msg"></p>
+<!-- LOGIN -->
+<h3>Login</h3>
+<input id="logUser" placeholder="username">
+<input id="logPass" placeholder="password" type="password">
+<button onclick="login()">Login</button>
 
-  <p onclick="toggleRegister()">New user? Register</p>
+<hr>
 
-  <div id="registerBox" style="display:none;">
-    <input id="ruser" placeholder="Username">
-    <input id="rpass" placeholder="Password">
-    <button onclick="register()">Register</button>
-  </div>
-</div>
+<!-- UPLOAD -->
+<h3>Upload Files</h3>
+<input type="file" id="files" multiple>
+<button onclick="upload()">Upload</button>
 
-<div id="vault" style="display:none;">
-  <h2>Your Vault</h2>
+<hr>
 
-  <input type="file" id="files" multiple>
-  <button onclick="upload()">Upload Files</button>
-  <button onclick="upgrade()">Upgrade ₹99</button>
+<!-- FILE LIST -->
+<h3>Your Files</h3>
+<div id="fileList"></div>
 
-  <p id="limit"></p>
+<script>
 
-  <div id="fileList"></div>
-</div>
+// REGISTER
+async function register() {
+  const username = document.getElementById("regUser").value;
+  const password = document.getElementById("regPass").value;
 
-<!-- 🔥 FORCE NEW JS LOAD -->
-<script src="/script.js?v=999"></script>
+  const res = await fetch("/register", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ username, password })
+  });
+
+  alert("Registered");
+}
+
+// LOGIN
+async function login() {
+  const username = document.getElementById("logUser").value;
+  const password = document.getElementById("logPass").value;
+
+  const res = await fetch("/login", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ username, password })
+  });
+
+  const data = await res.json();
+
+  if (data.success) {
+    alert("Login successful");
+    loadFiles();
+  } else {
+    alert(data.error);
+  }
+}
+
+// UPLOAD
+async function upload() {
+  const files = document.getElementById("files").files;
+
+  const formData = new FormData();
+  for (let f of files) {
+    formData.append("files", f);
+  }
+
+  await fetch("/upload", {
+    method: "POST",
+    body: formData
+  });
+
+  alert("Uploaded");
+  loadFiles();
+}
+
+// LOAD FILES
+async function loadFiles() {
+  const res = await fetch("/files");
+  const files = await res.json();
+
+  const div = document.getElementById("fileList");
+  div.innerHTML = "";
+
+  files.forEach(f => {
+    div.innerHTML += `
+      <div>
+        ${f.file_name}
+        <a href="${f.file_url}" target="_blank">Download</a>
+        <button onclick="deleteFile('${f.id}')">Delete</button>
+        <button onclick="shareFile('${f.id}')">Share</button>
+      </div>
+      <hr>
+    `;
+  });
+}
+
+// DELETE
+async function deleteFile(id) {
+  await fetch("/delete", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ id })
+  });
+
+  loadFiles();
+}
+
+// SHARE
+async function shareFile(fileId) {
+  const toUser = prompt("Enter username:");
+
+  if (!toUser) return;
+
+  const res = await fetch("/share", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ id: fileId, toUser })
+  });
+
+  const data = await res.json();
+
+  if (data.success) {
+    alert("Shared successfully ✅");
+  } else {
+    alert(data.error);
+  }
+}
+
+</script>
 
 </body>
 </html>
