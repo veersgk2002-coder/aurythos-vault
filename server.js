@@ -3,7 +3,6 @@ const multer = require("multer");
 const crypto = require("crypto");
 const axios = require("axios");
 const path = require("path");
-require("dotenv").config();
 
 const app = express();
 
