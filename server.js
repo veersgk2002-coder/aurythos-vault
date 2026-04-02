@@ -4,138 +4,165 @@ const fileUpload = require("express-fileupload");
 const fs = require("fs");
 const path = require("path");
 const bcrypt = require("bcryptjs");
+const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// FILES
-const USERS = "users.json";
-const FILES = "files.json";
-const UPLOADS = "uploads";
-
-// INIT
-if (!fs.existsSync(USERS)) fs.writeFileSync(USERS, "{}");
-if (!fs.existsSync(FILES)) fs.writeFileSync(FILES, "{}");
-if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS);
-
-// MIDDLEWARE
+// ===== MIDDLEWARE =====
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(fileUpload());
-app.use(express.static("public"));
+app.use(cors());
+
+app.set('trust proxy', 1);
 
 app.use(session({
   secret: "aurythos_secret",
   resave: false,
   saveUninitialized: false,
+  cookie: {
+    secure: true,
+    httpOnly: true,
+    sameSite: "none"
+  }
 }));
 
-// HELPERS
-const getUsers = () => JSON.parse(fs.readFileSync(USERS));
-const saveUsers = (d) => fs.writeFileSync(USERS, JSON.stringify(d, null, 2));
+app.use(express.static("public"));
 
-const getFiles = () => JSON.parse(fs.readFileSync(FILES));
-const saveFiles = (d) => fs.writeFileSync(FILES, JSON.stringify(d, null, 2));
+// ===== FILES =====
+const USERS_FILE = "users.json";
+const FILES_FILE = "files.json";
 
-// ROUTES
+if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, "{}");
+if (!fs.existsSync(FILES_FILE)) fs.writeFileSync(FILES_FILE, "{}");
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public/index.html"));
-});
+// ===== HELPERS =====
+function getUsers() {
+  return JSON.parse(fs.readFileSync(USERS_FILE));
+}
 
-// REGISTER
+function saveUsers(data) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+}
+
+function getFiles() {
+  return JSON.parse(fs.readFileSync(FILES_FILE));
+}
+
+function saveFiles(data) {
+  fs.writeFileSync(FILES_FILE, JSON.stringify(data, null, 2));
+}
+
+// ===== ROUTES =====
+
+// Register
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
   const users = getUsers();
 
-  if (users[username]) return res.send("User exists");
+  if (users[username]) {
+    return res.send("User already exists");
+  }
 
-  users[username] = await bcrypt.hash(password, 10);
+  const hashed = await bcrypt.hash(password, 10);
+  users[username] = hashed;
   saveUsers(users);
 
-  res.redirect("/");
+  res.redirect("/login.html");
 });
 
-// LOGIN
+// Login
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
   const users = getUsers();
 
-  if (!users[username]) return res.send("User not found");
+  if (!users[username]) {
+    return res.send("User not found");
+  }
 
-  const ok = await bcrypt.compare(password, users[username]);
-  if (!ok) return res.send("Wrong password");
+  const match = await bcrypt.compare(password, users[username]);
+
+  if (!match) {
+    return res.send("Wrong password");
+  }
 
   req.session.user = username;
+
   res.redirect("/vault.html");
 });
 
-// UPLOAD
+// Upload
 app.post("/upload", (req, res) => {
-  if (!req.session.user) return res.redirect("/");
+  if (!req.session.user) return res.redirect("/login.html");
 
-  let files = getFiles();
-  if (!files[req.session.user]) files[req.session.user] = [];
+  const file = req.files.file;
+  const filePath = path.join("uploads", file.name);
 
-  let uploaded = req.files.file;
-  if (!Array.isArray(uploaded)) uploaded = [uploaded];
+  file.mv(filePath);
 
-  uploaded.forEach(f => {
-    const name = Date.now() + "_" + f.name;
-    f.mv(path.join(UPLOADS, name));
-    files[req.session.user].push(name);
-  });
+  const files = getFiles();
 
+  if (!files[req.session.user]) {
+    files[req.session.user] = [];
+  }
+
+  files[req.session.user].push(file.name);
   saveFiles(files);
+
   res.redirect("/vault.html");
 });
 
-// LIST
+// List Files
 app.get("/files", (req, res) => {
   if (!req.session.user) return res.json([]);
+
   const files = getFiles();
   res.json(files[req.session.user] || []);
 });
 
-// DOWNLOAD
+// Download
 app.get("/download/:name", (req, res) => {
-  const file = path.join(UPLOADS, req.params.name);
-  if (!fs.existsSync(file)) return res.send("Not found");
-  res.download(file);
+  const filePath = path.join(__dirname, "uploads", req.params.name);
+  res.download(filePath);
 });
 
-// DELETE
+// Delete
 app.get("/delete/:name", (req, res) => {
-  let files = getFiles();
-  const user = req.session.user;
+  const username = req.session.user;
+  const fileName = req.params.name;
 
-  files[user] = (files[user] || []).filter(f => f !== req.params.name);
+  const filePath = path.join("uploads", fileName);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+  const files = getFiles();
+  files[username] = (files[username] || []).filter(f => f !== fileName);
   saveFiles(files);
-
-  const file = path.join(UPLOADS, req.params.name);
-  if (fs.existsSync(file)) fs.unlinkSync(file);
 
   res.redirect("/vault.html");
 });
 
-// 🔥 USER TO USER SHARE
+// Share (User to User)
 app.post("/share", (req, res) => {
-  const { filename, toUser } = req.body;
+  const { toUser, fileName } = req.body;
+  const files = getFiles();
 
-  let files = getFiles();
+  if (!files[toUser]) files[toUser] = [];
+  files[toUser].push(fileName);
 
-  if (!files[toUser]) return res.send("User not found");
-
-  files[toUser].push(filename);
   saveFiles(files);
 
-  res.send("Shared successfully");
+  res.redirect("/vault.html");
 });
 
-// LOGOUT
+// Logout
 app.get("/logout", (req, res) => {
   req.session.destroy();
-  res.redirect("/");
+  res.redirect("/login.html");
 });
 
-app.listen(PORT, () => console.log("Running on", PORT));
+// ===== START =====
+app.listen(PORT, () => {
+  console.log("Server running on port", PORT);
+});
