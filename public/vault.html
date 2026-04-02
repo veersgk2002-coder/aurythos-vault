@@ -1,57 +1,87 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <div class="card">
-  <h2>Your Vault</h2>
+<h2>Your Vault</h2>
 
-  <form action="/upload" method="post" enctype="multipart/form-data">
-    <input type="file" name="file" multiple>
-    <button>Upload</button>
-  </form>
+<input type="file" id="file">
+<button onclick="upload()">Upload</button>
 
-  <div id="files"></div>
+<div id="files"></div>
 
-  <a href="/logout"><button class="logout">Logout</button></a>
+<button onclick="logout()">Logout</button>
 </div>
 
 <script>
-fetch("/files")
-.then(res => res.json())
-.then(data => {
-  const div = document.getElementById("files");
+const token = localStorage.getItem("token");
+if (!token) window.location="login.html";
 
-  data.forEach(file => {
-    div.innerHTML += `
-      <div class="file">
-        <p>${file}</p>
+function loadFiles() {
+  fetch("/files", {
+    headers: { Authorization: token }
+  })
+  .then(res => res.json())
+  .then(data => {
+    const div = document.getElementById("files");
+    div.innerHTML = "";
 
-        <div class="actions">
-          <a href="/download/${file}">Download</a>
-          <a href="/delete/${file}">Delete</a>
+    data.forEach(f => {
+      div.innerHTML += `
+        <div class="file">
+          ${f}<br>
+          <button onclick="download('${f}')">Download</button>
+          <button onclick="del('${f}')">Delete</button>
+          <button onclick="share('${f}')">Share</button>
         </div>
-
-        <input placeholder="username to share" id="share-${file}">
-        <button onclick="share('${file}')">Share</button>
-      </div>
-    `;
+      `;
+    });
   });
-});
+}
 
-function share(file) {
-  const user = document.getElementById("share-" + file).value;
+function upload() {
+  const file = document.getElementById("file").files[0];
+  const form = new FormData();
+  form.append("file", file);
 
+  fetch("/upload", {
+    method: "POST",
+    headers: { Authorization: token },
+    body: form
+  }).then(() => loadFiles());
+}
+
+function download(name) {
+  window.location = "/download/" + name;
+}
+
+function del(name) {
+  fetch("/delete/" + name, {
+    headers: { Authorization: token }
+  }).then(() => loadFiles());
+}
+
+function share(name) {
+  const toUser = prompt("Enter username:");
   fetch("/share", {
     method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ filename: file, toUser: user })
-  })
-  .then(res => res.text())
-  .then(msg => alert(msg));
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: token
+    },
+    body: JSON.stringify({ toUser, fileName: name })
+  });
 }
+
+function logout() {
+  localStorage.removeItem("token");
+  window.location = "/login.html";
+}
+
+loadFiles();
 </script>
 
 </body>

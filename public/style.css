@@ -1,44 +1,41 @@
 body {
-  margin:0;
-  height:100vh;
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  background: linear-gradient(#0f2027,#2c5364);
+  margin: 0;
   font-family: Arial;
+  background: linear-gradient(135deg, #0f5c5c, #1a8a8a);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
 }
 
 .card {
   background: rgba(255,255,255,0.1);
-  padding:20px;
-  border-radius:15px;
-  width:300px;
-  text-align:center;
+  padding: 20px;
+  border-radius: 12px;
+  width: 300px;
+  text-align: center;
 }
 
 input {
-  width:100%;
-  margin:5px 0;
-  padding:8px;
+  width: 100%;
+  margin: 8px 0;
+  padding: 10px;
+  border-radius: 6px;
+  border: none;
 }
 
 button {
-  margin-top:5px;
-  padding:8px;
-  width:100%;
-  border:none;
-  background:#00c6ff;
-  color:white;
-  border-radius:6px;
-}
-
-.logout {
-  background:red;
+  width: 100%;
+  padding: 10px;
+  margin-top: 8px;
+  border: none;
+  border-radius: 6px;
+  background: #00c2d3;
+  color: white;
 }
 
 .file {
-  margin-top:10px;
-  padding:10px;
+  margin-top: 10px;
+  padding: 8px;
   background: rgba(255,255,255,0.1);
-  border-radius:10px;
 }
