@@ -1,117 +1,57 @@
 <!DOCTYPE html>
 <html>
 <head>
-<link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
 <div class="card">
-<h3>Your Vault</h3>
+  <h2>Your Vault</h2>
 
-<form action="/upload" method="POST" enctype="multipart/form-data">
-<input type="file" name="file" multiple>
-<button>Upload Files</button>
-</form>
+  <form action="/upload" method="post" enctype="multipart/form-data">
+    <input type="file" name="file" multiple>
+    <button>Upload</button>
+  </form>
 
-<div id="files"></div>
+  <div id="files"></div>
 
-<button class="logout" onclick="location.href='/logout'">Logout</button>
-</div>
-
-<!-- 🔥 MODAL -->
-<div id="modal" class="modal">
-<span class="close" onclick="closeModal()">×</span>
-<div class="modal-content" id="previewBox"></div>
+  <a href="/logout"><button class="logout">Logout</button></a>
 </div>
 
 <script>
-async function load(){
-  const res = await fetch("/files");
-  const files = await res.json();
+fetch("/files")
+.then(res => res.json())
+.then(data => {
+  const div = document.getElementById("files");
 
-  let html="";
+  data.forEach(file => {
+    div.innerHTML += `
+      <div class="file">
+        <p>${file}</p>
 
-  files.forEach(f=>{
-    const e = encodeURIComponent(f);
+        <div class="actions">
+          <a href="/download/${file}">Download</a>
+          <a href="/delete/${file}">Delete</a>
+        </div>
 
-    html+=`
-    <div class="file">
-      ${f}
-
-      <div class="actions">
-        <button onclick="preview('${f}')">Preview</button>
-        <button onclick="download('${e}')">Download</button>
+        <input placeholder="username to share" id="share-${file}">
+        <button onclick="share('${file}')">Share</button>
       </div>
-
-      <div class="actions">
-        <button onclick="send('${f}')">Send</button>
-        <button onclick="del('${e}')">Delete</button>
-      </div>
-    </div>`;
+    `;
   });
+});
 
-  document.getElementById("files").innerHTML = html;
+function share(file) {
+  const user = document.getElementById("share-" + file).value;
+
+  fetch("/share", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ filename: file, toUser: user })
+  })
+  .then(res => res.text())
+  .then(msg => alert(msg));
 }
-
-
-// 🔥 PRO PREVIEW
-function preview(file){
-  const url = "/preview/" + encodeURIComponent(file);
-  const ext = file.split(".").pop().toLowerCase();
-
-  let content = "";
-
-  if(ext === "pdf"){
-    content = `<iframe src="${url}" width="100%" height="100%"></iframe>`;
-  }
-  else if(["jpg","jpeg","png"].includes(ext)){
-    content = `<img src="${url}" style="width:100%">`;
-  }
-  else if(ext === "txt"){
-    fetch(url).then(r=>r.text()).then(t=>{
-      document.getElementById("previewBox").innerHTML = "<pre>"+t+"</pre>";
-    });
-    document.getElementById("modal").style.display="flex";
-    return;
-  }
-  else{
-    content = `<p style="padding:20px">Preview not supported</p>`;
-  }
-
-  document.getElementById("previewBox").innerHTML = content;
-  document.getElementById("modal").style.display="flex";
-}
-
-function closeModal(){
-  document.getElementById("modal").style.display="none";
-}
-
-function download(f){
-  window.location="/download/"+f;
-}
-
-function del(f){
-  window.location="/delete/"+f;
-}
-
-async function send(file){
-  const user = prompt("Send to username:");
-  if(!user) return;
-
-  const res = await fetch("/send",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      toUser:user,
-      fileName:file
-    })
-  });
-
-  const data = await res.json();
-  alert(data.success ? "Sent" : data.message);
-}
-
-load();
 </script>
 
 </body>
