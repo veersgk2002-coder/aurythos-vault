@@ -1,5 +1,5 @@
 {
-  "name": "aurythos",
+  "name": "aurythos-vault",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
@@ -7,8 +7,8 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "express-fileupload": "^1.4.0"
+    "express-fileupload": "^1.4.0",
+    "express-session": "^1.17.3"
   }
 }

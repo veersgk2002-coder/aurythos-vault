@@ -1,155 +1,148 @@
 const express = require("express");
+const session = require("express-session");
 const fileUpload = require("express-fileupload");
 const fs = require("fs");
 const path = require("path");
 const bcrypt = require("bcryptjs");
-const crypto = require("crypto");
-const cors = require("cors");
 
 const app = express();
+
+// ===== CONFIG =====
 const PORT = process.env.PORT || 4000;
+const DATA_PATH = __dirname;
+const UPLOAD_PATH = path.join(__dirname, "uploads");
 
-// ===== PATH FIX FOR RENDER =====
-const DATA_PATH = process.env.NODE_ENV === "production" ? "/tmp" : __dirname;
-const UPLOAD_PATH = path.join(DATA_PATH, "uploads");
-
+// ensure files exist
 if (!fs.existsSync(UPLOAD_PATH)) fs.mkdirSync(UPLOAD_PATH);
-if (!fs.existsSync(path.join(DATA_PATH, "users.json"))) fs.writeFileSync(path.join(DATA_PATH, "users.json"), "[]");
-if (!fs.existsSync(path.join(DATA_PATH, "files.json"))) fs.writeFileSync(path.join(DATA_PATH, "files.json"), "[]");
+if (!fs.existsSync("users.json")) fs.writeFileSync("users.json", "[]");
+if (!fs.existsSync("files.json")) fs.writeFileSync("files.json", "[]");
 
 // ===== MIDDLEWARE =====
-app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(fileUpload());
+
+app.use(session({
+  secret: "aurythos_secret",
+  resave: false,
+  saveUninitialized: false
+}));
+
 app.use(express.static("public"));
 
-// ===== AUTH =====
-function auth(req, res, next) {
-  const token = req.headers.authorization;
-  const users = JSON.parse(fs.readFileSync(path.join(DATA_PATH, "users.json")));
+// ===== HELPERS =====
+function readJSON(file) {
+  return JSON.parse(fs.readFileSync(path.join(DATA_PATH, file)));
+}
 
-  const user = users.find(u => u.token === token);
-  if (!user) return res.status(401).json({ error: "Unauthorized" });
-
-  req.user = user;
-  next();
+function writeJSON(file, data) {
+  fs.writeFileSync(path.join(DATA_PATH, file), JSON.stringify(data, null, 2));
 }
 
 // ===== REGISTER =====
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
-  let users = JSON.parse(fs.readFileSync(path.join(DATA_PATH, "users.json")));
+
+  let users = readJSON("users.json");
 
   if (users.find(u => u.username === username)) {
-    return res.json({ error: "User exists" });
+    return res.json({ success: false, message: "User exists" });
   }
 
-  const hash = await bcrypt.hash(password, 10);
-  users.push({ username, password: hash });
+  const hashed = await bcrypt.hash(password, 10);
 
-  fs.writeFileSync(path.join(DATA_PATH, "users.json"), JSON.stringify(users));
+  users.push({ username, password: hashed });
+  writeJSON("users.json", users);
+
   res.json({ success: true });
 });
 
 // ===== LOGIN =====
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
-  let users = JSON.parse(fs.readFileSync(path.join(DATA_PATH, "users.json")));
 
+  let users = readJSON("users.json");
   const user = users.find(u => u.username === username);
-  if (!user) return res.json({ error: "User not found" });
+
+  if (!user) return res.json({ success: false });
 
   const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.json({ error: "Wrong password" });
 
-  const token = crypto.randomBytes(16).toString("hex");
-  user.token = token;
+  if (!match) return res.json({ success: false });
 
-  fs.writeFileSync(path.join(DATA_PATH, "users.json"), JSON.stringify(users));
-  res.json({ token });
+  req.session.user = username;
+  res.json({ success: true });
 });
 
 // ===== UPLOAD =====
-app.post("/upload", auth, (req, res) => {
-  if (!req.files) return res.json({ error: "No file" });
+app.post("/upload", (req, res) => {
+  if (!req.session.user) return res.sendStatus(401);
 
   const file = req.files.file;
   const filename = Date.now() + "_" + file.name;
 
-  file.mv(path.join(UPLOAD_PATH, filename));
+  const filepath = path.join(UPLOAD_PATH, filename);
+  file.mv(filepath);
 
-  let files = JSON.parse(fs.readFileSync(path.join(DATA_PATH, "files.json")));
+  let files = readJSON("files.json");
+  files.push({ owner: req.session.user, name: filename });
 
-  files.push({
-    owner: req.user.username,
-    filename,
-    original: file.name,
-    shared: []
-  });
+  writeJSON("files.json", files);
 
-  fs.writeFileSync(path.join(DATA_PATH, "files.json"), JSON.stringify(files));
   res.json({ success: true });
 });
 
-// ===== LIST FILES =====
-app.get("/files", auth, (req, res) => {
-  const files = JSON.parse(fs.readFileSync(path.join(DATA_PATH, "files.json")));
+// ===== GET FILES =====
+app.get("/files", (req, res) => {
+  if (!req.session.user) return res.sendStatus(401);
 
-  const userFiles = files.filter(
-    f => f.owner === req.user.username || f.shared.includes(req.user.username)
-  );
+  let files = readJSON("files.json");
+  const userFiles = files.filter(f => f.owner === req.session.user);
 
   res.json(userFiles);
 });
 
 // ===== DOWNLOAD =====
-app.get("/download/:name", auth, (req, res) => {
+app.get("/download/:name", (req, res) => {
   const filePath = path.join(UPLOAD_PATH, req.params.name);
-
-  if (!fs.existsSync(filePath)) {
-    return res.json({ error: "File not found" });
-  }
-
   res.download(filePath);
 });
 
 // ===== DELETE =====
-app.delete("/delete/:name", auth, (req, res) => {
-  let files = JSON.parse(fs.readFileSync(path.join(DATA_PATH, "files.json")));
+app.post("/delete", (req, res) => {
+  const { name } = req.body;
 
-  const file = files.find(f => f.filename === req.params.name);
+  let files = readJSON("files.json");
+  files = files.filter(f => f.name !== name);
 
-  if (!file || file.owner !== req.user.username) {
-    return res.json({ error: "Not allowed" });
-  }
+  writeJSON("files.json", files);
 
-  const filePath = path.join(UPLOAD_PATH, req.params.name);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  fs.unlinkSync(path.join(UPLOAD_PATH, name));
 
-  files = files.filter(f => f.filename !== req.params.name);
-
-  fs.writeFileSync(path.join(DATA_PATH, "files.json"), JSON.stringify(files));
   res.json({ success: true });
 });
 
 // ===== SHARE =====
-app.post("/share", auth, (req, res) => {
-  const { filename, toUser } = req.body;
-  let files = JSON.parse(fs.readFileSync(path.join(DATA_PATH, "files.json")));
+app.post("/share", (req, res) => {
+  const { name, toUser } = req.body;
 
-  const file = files.find(f => f.filename === filename);
+  let files = readJSON("files.json");
 
-  if (!file || file.owner !== req.user.username) {
-    return res.json({ error: "Not allowed" });
-  }
+  files.push({ owner: toUser, name });
 
-  if (!file.shared.includes(toUser)) {
-    file.shared.push(toUser);
-  }
+  writeJSON("files.json", files);
 
-  fs.writeFileSync(path.join(DATA_PATH, "files.json"), JSON.stringify(files));
   res.json({ success: true });
 });
 
-app.listen(PORT, () => console.log("Server running on", PORT));
+// ===== LOGOUT =====
+app.get("/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.redirect("/");
+  });
+});
+
+// ===== START =====
+app.listen(PORT, () => {
+  console.log("Server running on port", PORT);
+});

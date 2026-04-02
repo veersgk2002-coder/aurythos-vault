@@ -1,35 +1,31 @@
 body {
-  margin: 0;
+  background: #1f6f73;
   font-family: Arial;
-  background: linear-gradient(to right, #1d5f63, #1a4c52);
-  color: white;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
 }
 
-.box {
-  width: 300px;
-  margin: 100px auto;
+.card {
+  background: #2c7a7b;
   padding: 20px;
-  background: rgba(255,255,255,0.1);
   border-radius: 10px;
+  width: 300px;
   text-align: center;
 }
 
-input, button {
+input {
   width: 90%;
+  margin: 10px;
   padding: 10px;
-  margin: 8px;
-  border-radius: 5px;
-  border: none;
 }
 
 button {
-  background: #00c2d1;
-  color: white;
-}
-
-.file {
-  background: rgba(255,255,255,0.1);
-  margin: 10px;
+  width: 90%;
   padding: 10px;
-  border-radius: 8px;
+  margin: 5px;
+  background: #00cfcf;
+  border: none;
+  color: white;
 }

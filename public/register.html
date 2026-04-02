@@ -5,39 +5,36 @@
 </head>
 <body>
 
-<div class="box">
+<div class="card">
 <h2>Register</h2>
 
-<form onsubmit="registerUser(event)">
-<input name="username" required placeholder="Username">
-<input name="password" type="password" required placeholder="Password">
-<button>Register</button>
-</form>
+<input id="user" placeholder="Username">
+<input id="pass" type="password" placeholder="Password">
 
-<a href="login.html">Back to Login</a>
+<button onclick="register()">Register</button>
+
+<p><a href="/">Back to login</a></p>
 </div>
 
 <script>
-function registerUser(e){
-  e.preventDefault();
-
-  fetch("/register", {
+async function register() {
+  const res = await fetch("/register", {
     method: "POST",
-    headers: {"Content-Type":"application/json"},
+    headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
-      username: e.target.username.value,
-      password: e.target.password.value
+      username: user.value,
+      password: pass.value
     })
-  })
-  .then(res=>res.json())
-  .then(data=>{
-    if(data.success){
-      alert("Registered successfully");
-      window.location="login.html";
-    } else {
-      alert(data.error || "Error");
-    }
   });
+
+  const data = await res.json();
+
+  if (data.success) {
+    alert("Registered");
+    window.location = "/";
+  } else {
+    alert(data.message);
+  }
 }
 </script>
 

@@ -6,33 +6,34 @@
 <body>
 
 <div class="card">
-<h3>Aurythos Vault</h3>
+<h2>Aurythos Vault</h2>
 
 <input id="user" placeholder="Username">
 <input id="pass" type="password" placeholder="Password">
 
 <button onclick="login()">Login</button>
 
-<p><a href="/register.html">New user? Register</a></p>
-
-<p id="msg"></p>
+<p><a href="register.html">New user? Register</a></p>
 </div>
 
 <script>
-async function login(){
-  const res = await fetch("/login",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      username:user.value,
-      password:pass.value
+async function login() {
+  const res = await fetch("/login", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      username: user.value,
+      password: pass.value
     })
   });
 
   const data = await res.json();
 
-  if(data.success) location.href="/vault";
-  else msg.innerText=data.message;
+  if (data.success) {
+    window.location = "vault.html";
+  } else {
+    alert("Login failed");
+  }
 }
 </script>
 
